@@ -7,7 +7,8 @@
 
 use crate::slint_generated::*;
 use crate::state::App;
-use crate::{logging, ops_worker, preview, register_association};
+use crate::commands::register_association;
+use crate::{logging, ops_worker, preview};
 use ops_worker::Job;
 use crate::menu;
 use slint::{ModelRc, SharedString, VecModel};

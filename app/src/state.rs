@@ -186,7 +186,7 @@ pub fn settings_path() -> PathBuf {
 
 /// Push the stored preferences into the UI.
 pub fn apply_saved_ui(ui: &AppWindow, app: &App) {
-    crate::refresh_theme(ui, app.dark);
+    crate::view::refresh_theme(ui, app.dark);
     ui.set_view_mode(app.view_mode);
     ui.set_show_sidebar(app.show_sidebar);
     ui.set_show_preview(app.show_preview);
