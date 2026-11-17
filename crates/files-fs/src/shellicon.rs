@@ -66,6 +66,31 @@ pub struct RgbaIcon {
     pub pixels: Vec<u8>,
 }
 
+/// Initialise COM on the calling thread, once.
+///
+/// `SHGetFileInfoW` needs an apartment. The app already initialises COM on its
+/// main thread, but icon lookups run on the worker, which does not. `RPC_E_CHANGED_MODE`
+/// means COM is already up in a different model; that is fine for this call.
+#[cfg(windows)]
+fn ensure_com() {
+    use std::cell::Cell;
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    DONE.with(|done| {
+        if done.get() {
+            return;
+        }
+        // SAFETY: pairing every successful CoInitializeEx with an uninit would
+        // be wrong here — the thread outlives the call and the worker keeps
+        // using the Shell, so COM stays initialised for the thread's lifetime.
+        let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        done.set(true);
+    });
+}
+
 /// Read the Shell's icon for `path` at `size` pixels.
 ///
 /// Returns `None` when the Shell has no icon, which is not an error: the caller
@@ -94,6 +119,12 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_LARGEICON,
     };
     use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
+
+    // The Shell refuses to hand out icons on a thread that never initialised
+    // COM. Skipping this makes `SHGetFileInfoW` return 0 *intermittently*,
+    // depending on which thread happens to call it first — which is exactly the
+    // kind of flake that hides until a user opens a folder of `.exe` files.
+    ensure_com();
 
     // The Shell picks the closest available size; ask for the bucket that
     // matches what we render.
@@ -202,7 +233,7 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         }
 
         // GetDIBits gives BGRA; Slint wants RGBA. Straight swap, alpha kept.
-        for px in buf.chunks_exact_mut(4) {
+        for px in buf.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
         }
 
