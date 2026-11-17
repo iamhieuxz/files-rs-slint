@@ -1,0 +1,20 @@
+[package]
+name = "files-rs-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Slint desktop shell for the Rust file manager."
+
+[[bin]]
+name = "files-rs"
+path = "src/main.rs"
+
+[dependencies]
+slint = { workspace = true }
+files-core = { workspace = true }
+files-fs = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+open = "5"
+
+[build-dependencies]
+slint-build = { workspace = true }

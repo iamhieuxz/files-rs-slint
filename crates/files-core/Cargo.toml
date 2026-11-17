@@ -1,0 +1,9 @@
+[package]
+name = "files-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure data model for a Windows file manager: entries, listings, breadcrumbs, sorting."
+
+[dependencies]
+serde = { workspace = true }

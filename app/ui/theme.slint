@@ -1,0 +1,61 @@
+// Design tokens. Mọi màu, khoảng cách, bo góc trong UI lấy từ đây.
+// Hướng: flat, tối, nhiều lớp alpha thay vì một màu đặc. Một accent duy nhất.
+// Lưu ý: Slint 1.19 trên Windows không bật cửa sổ trong suốt; "trong suốt" ở đây là lớp
+// nền có alpha thấp so với nền cửa sổ, không phải xuyên qua màn hình.
+
+export global Theme {
+    // Lớp nền (từ dưới lên): canvas < panel < card. Alpha để tạo cảm giác lớp mờ.
+    out property <color> canvas: #0b0c0eee;
+    out property <color> panel: #14161aaa;
+    out property <color> card: #1b1e23cc;
+    out property <color> hover: #ffffff12;
+    out property <color> pressed: #ffffff1f;
+    out property <color> selected: #3b82f630;
+
+    // Viền
+    out property <color> border: #ffffff14;
+    out property <color> border-strong: #ffffff26;
+
+    // Chữ
+    out property <color> text-primary: #f3f4f6;
+    out property <color> text-secondary: #a3a9b3;
+    out property <color> text-muted: #6b7280;
+
+    // Accent duy nhất
+    out property <color> accent: #3b82f6;
+    out property <color> danger: #f87171;
+
+    // Màu theo loại tệp (flat, dùng cho icon)
+    out property <color> icon-folder: #facc15;
+    out property <color> icon-image: #34d399;
+    out property <color> icon-doc: #60a5fa;
+    out property <color> icon-code: #c084fc;
+    out property <color> icon-media: #fb923c;
+    out property <color> icon-archive: #f472b6;
+    out property <color> icon-file: #9ca3af;
+
+    // Khoảng cách: bội số 4
+    out property <length> s1: 4px;
+    out property <length> s2: 8px;
+    out property <length> s3: 12px;
+    out property <length> s4: 16px;
+    out property <length> s6: 24px;
+
+    // Bo góc
+    out property <length> r-sm: 6px;
+    out property <length> r-md: 10px;
+
+    // Kích thước cố định
+    out property <length> row-height: 32px;
+    out property <length> tab-height: 36px;
+    out property <length> toolbar-height: 44px;
+    out property <length> header-height: 30px;
+    out property <length> status-height: 26px;
+    out property <length> sidebar-width: 220px;
+    out property <length> preview-min: 260px;
+
+    // Chữ
+    out property <length> font-body: 13px;
+    out property <length> font-meta: 12px;
+    out property <length> font-label: 11px;
+}

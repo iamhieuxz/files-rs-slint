@@ -1,0 +1,120 @@
+import { Theme } from "theme.slint";
+import { Icon } from "icons.slint";
+
+// Nút icon phẳng: hover/pressed bằng lớp alpha, không viền, không đổ bóng.
+export component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    width: Theme.toolbar-height - Theme.s2 * 2;
+    height: Theme.toolbar-height - Theme.s2 * 2;
+    border-radius: Theme.r-sm;
+    background: !root.enabled ? transparent
+        : ta.pressed ? Theme.pressed
+        : ta.has-hover ? Theme.hover
+        : transparent;
+    animate background { duration: 100ms; easing: ease-out; }
+
+    Icon {
+        name: root.icon;
+        tint: root.enabled ? Theme.text-primary : Theme.text-muted;
+        width: 16px;
+        height: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Tab trên cùng: nền nhẹ, gạch accent dưới khi đang chọn.
+export component TabItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+    callback closed();
+
+    min-width: 160px;
+    max-width: 220px;
+    height: Theme.tab-height;
+    background: root.active ? Theme.card : (ta.has-hover ? Theme.hover : transparent);
+    animate background { duration: 100ms; }
+
+    HorizontalLayout {
+        padding-left: Theme.s3;
+        padding-right: Theme.s2;
+        spacing: Theme.s2;
+        alignment: center;
+        Text {
+            text: root.label;
+            color: root.active ? Theme.text-primary : Theme.text-secondary;
+            font-size: Theme.font-body;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        close-ta := TouchArea {
+            width: 18px;
+            height: 18px;
+            Icon {
+                name: "close";
+                tint: Theme.text-muted;
+                width: 12px;
+                height: 12px;
+                x: 3px;
+                y: 3px;
+            }
+            clicked => { root.closed(); }
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        width: parent.width;
+        background: root.active ? Theme.accent : transparent;
+    }
+
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// Mục sidebar: icon + nhãn, trạng thái chọn bằng nền selected và chữ sáng.
+export component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 30px;
+    border-radius: Theme.r-sm;
+    background: root.active ? Theme.selected
+        : (ta.has-hover ? Theme.hover : transparent);
+    animate background { duration: 100ms; }
+
+    HorizontalLayout {
+        padding-left: Theme.s3;
+        padding-right: Theme.s2;
+        spacing: Theme.s3;
+        alignment: start;
+        Icon {
+            name: root.icon;
+            width: 16px;
+            height: 16px;
+            tint: root.active ? Theme.accent : Theme.text-secondary;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            color: root.active ? Theme.text-primary : Theme.text-secondary;
+            font-size: Theme.font-body;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
