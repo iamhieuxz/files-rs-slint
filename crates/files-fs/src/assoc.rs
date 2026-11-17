@@ -52,7 +52,7 @@ pub fn register(exe: &Path) -> Result<(), FsError> {
         &format!("\"{exe_str}\" \"%1\""),
     )?;
     // Capabilities: danh sách loại nội dung app nhận mở.
-    let caps = format!(r"Software\FilesRS\Capabilities");
+    let caps = r"Software\FilesRS\Capabilities".to_string();
     set_string(&caps, "ApplicationName", "Files RS")?;
     set_string(&caps, "ApplicationDescription", "Trình quản lý tệp cho Windows")?;
     set_string(&format!(r"{caps}\FileAssociations"), ".zip", "CompressedFolder")?;
