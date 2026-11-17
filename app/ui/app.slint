@@ -140,6 +140,8 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-primary-label: "OK";
     in-out property <string> dialog-value;
     in-out property <bool> dialog-has-input: true;
+    // Cho phép bấm nút chính khi ô nhập còn trống (lệnh tự sinh tên).
+    in-out property <bool> dialog-allows-empty: false;
 
     // menu ngữ cảnh
     in-out property <bool> menu-open: false;
@@ -1218,7 +1220,11 @@ export component AppWindow inherits Window {
             y: (parent.height - self.height) / 2;
             title: root.dialog-title;
             primary-label: root.dialog-primary-label;
-            primary-enabled: !root.dialog-has-input || root.dialog-value != "";
+            // Lệnh tự sinh tên (thư mục/tệp mới) vẫn bấm được khi ô trống:
+            // Rust sẽ chọn "Thư mục mới (2)" thay vì bắt người dùng gõ trước.
+            primary-enabled: !root.dialog-has-input
+                || root.dialog-value != ""
+                || root.dialog-allows-empty;
             primary => { root.dialog-confirm(root.dialog-value); }
             cancelled => { root.dialog-cancel(); }
 
@@ -1246,9 +1252,14 @@ export component AppWindow inherits Window {
                         color: Theme.text-primary;
                         font-size: Theme.font-body;
                         single-line: true;
-                        text: root.dialog-value;
-                        edited => { root.dialog-value = self.text; }
+                        // Hai chiều: gõ là `dialog-value` đổi ngay. Trước đây
+                        // binding một chiều cộng `edited` gán ngược lại, nên
+                        // giá trị không tới được Rust và nút "Tạo" đứng im.
+                        text <=> root.dialog-value;
                         accepted => { root.dialog-confirm(self.text); }
+                        // Focus ngay khi hộp thoại mở, nếu không người dùng gõ
+                        // mà không có gì xảy ra.
+                        init => { self.focus(); }
                     }
                 }
             }

@@ -147,6 +147,22 @@ Start, format drive, recycle bin browser, rotate ảnh, set wallpaper.
 | Bảng thuộc tính nằm đáy panel | `VerticalLayout` chia đều chiều cao | Bọc khối trong layout `alignment: start` |
 | Binding loop ở bảng thuộc tính | Chiều cao suy ra từ `parent.height` | Chiều cao chỉ phụ thuộc số dòng |
 | **App chết ngay cú click đầu** | `a.borrow_mut().show_hidden = !a.borrow().show_hidden` mượn mutable và immutable cùng lúc → `RefCell already borrowed` panic | Đọc ra biến trước rồi mới ghi |
+| **Tạo/đổi tên không có tác dụng** | Ô nhập trong hộp thoại không được focus và binding một chiều, nên gõ không vào giá trị, nút "Tạo" luôn bị disable | `init => { self.focus(); }` + binding hai chiều `text <=> root.dialog-value`; cho phép ô trống với lệnh tự sinh tên |
+| **Nút "Tạo" chết khi ô trống** | `primary-enabled` đòi `dialog-value != ""` | Thêm `dialog-allows-empty` cho lệnh tạo thư mục/tệp |
+| **Icon chặn thao tác tệp** | Icon và tạo/đổi tên/xoá dùng chung một luồng, một icon chậm làm mọi lệnh sau đứng im | Tách `AuxJob` sang luồng `files-bg`; có test xếp 300 icon trước rồi kiểm tra lệnh tạo vẫn chạy |
+| **App mở kèm cửa sổ console** | Thiếu `windows_subsystem` | `#![cfg_attr(windows, windows_subsystem = "windows")]` |
+| **"Access is denied (os error 5)" khó hiểu** | Hiển thị nguyên văn lỗi Windows | `format::explain_error` dịch sang câu hành động được |
+
+## Ghi log
+
+App không có console nên `stderr` mất hút. Mọi sự kiện chẩn đoán ghi vào tệp,
+chọn chỗ ghi đầu tiên hoạt động được:
+
+1. `%LOCALAPPDATA%\FilesRS\log.txt`
+2. `files-rs-log.txt` cạnh file exe (dự phòng khi profile bị chặn ghi)
+
+Log ghi: khởi động, mỗi lần xác nhận hộp thoại (kèm thư mục đích), lỗi thao tác,
+và mọi panic kèm vị trí. Tệp tự xoá khi vượt 1 MB.
 | Kéo cửa sổ làm app đứng | `SendMessageW(WM_NCLBUTTONDOWN)` chạy vòng lặp modal ngay trong handler của Slint, và Slint không nhận `WM_LBUTTONUP` nên tưởng chuột vẫn nhấn | Dùng `winit::Window::drag_window()`, trả về ngay và giữ đúng trạng thái chuột |
 | Nút cửa sổ không bấm được | Vùng kéo khai báo sau các nút nên nằm trên, nuốt click | Khai báo vùng kéo trước, và giới hạn bề rộng `parent.width - 138px` |
 

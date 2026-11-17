@@ -1,7 +1,12 @@
+// Không mở cửa sổ console: app gốc không có console. Thuộc tính phải đứng
+// trước mọi item khác, nên đặt ngay đầu tệp.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 slint::include_modules!();
 
 mod format;
 mod history;
+mod logging;
 mod ops_worker;
 mod preview;
 mod window;
@@ -130,6 +135,13 @@ impl App {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // Không có console nên stderr mất hút; ghi log ra tệp để còn chẩn đoán.
+    logging::install_panic_hook();
+    logging::write(&format!(
+        "khởi động, log tại {:?}",
+        logging::log_path()
+    ));
+
     let ui = AppWindow::new()?;
     let home = std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
@@ -454,7 +466,7 @@ fn queue_shell_icons(app: &Rc<RefCell<App>>) {
     };
     let worker = &app.borrow().worker;
     for path in paths {
-        worker.submit(Job::ShellIcon { path, size: 20, token });
+        worker.submit_icon(path, 20, token);
     }
 }
 
@@ -1383,6 +1395,7 @@ fn ask_delete_permanent(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ));
     ui.set_dialog_primary_label(SharedString::from("Xoá vĩnh viễn"));
     ui.set_dialog_has_input(false);
+    ui.set_dialog_allows_empty(false);
     ui.set_dialog_value(SharedString::default());
     ui.set_dialog_open(true);
 }
@@ -1421,6 +1434,7 @@ fn ask_register_association(ui: &AppWindow) {
     ));
     ui.set_dialog_primary_label(SharedString::from("Đăng ký"));
     ui.set_dialog_has_input(false);
+    ui.set_dialog_allows_empty(false);
     ui.set_dialog_value(SharedString::default());
     ui.set_dialog_open(true);
 }
@@ -1638,6 +1652,7 @@ fn ask_delete(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ));
     ui.set_dialog_primary_label(SharedString::from("Xoá"));
     ui.set_dialog_has_input(false);
+    ui.set_dialog_allows_empty(false);
     ui.set_dialog_value(SharedString::default());
     ui.set_dialog_open(true);
 }
@@ -1653,6 +1668,7 @@ fn ask_rename(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.set_dialog_text(SharedString::from("Nhập tên mới"));
     ui.set_dialog_primary_label(SharedString::from("Đổi tên"));
     ui.set_dialog_has_input(true);
+    ui.set_dialog_allows_empty(false);
     ui.set_dialog_value(SharedString::from(name.as_str()));
     ui.set_dialog_open(true);
 }
@@ -1669,6 +1685,8 @@ fn ask_new(ui: &AppWindow, app: &Rc<RefCell<App>>, kind: &str) {
     ui.set_dialog_text(SharedString::from(placeholder));
     ui.set_dialog_primary_label(SharedString::from(label));
     ui.set_dialog_has_input(true);
+    // Tạo thư mục/tệp mới: để trống vẫn bấm được, Rust tự chọn tên chưa dùng.
+    ui.set_dialog_allows_empty(true);
     ui.set_dialog_value(SharedString::default());
     ui.set_dialog_open(true);
 }
@@ -1689,6 +1707,12 @@ fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
     let kind = ui.get_dialog_kind().to_string();
     ui.set_dialog_open(false);
     let current = app.borrow().tab().current().to_path_buf();
+    // Ghi lại để khi người dùng báo "không được" thì biết lệnh có tới Rust không,
+    // và thư mục đích là đâu.
+    logging::write(&format!(
+        "xác nhận: kind={kind} value={value:?} tại {:?}",
+        current
+    ));
 
     match kind.as_str() {
         "rename" => {
@@ -1875,7 +1899,10 @@ fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                             reload(&ui, &a);
                         }
                         Err(e) => {
-                            ui.set_error_text(SharedString::from(e.message.as_str()));
+                            logging::write(&format!("thao tác lỗi [{}]: {}", e.code, e.message));
+                            // Câu giải thích thay cho "(os error 5)" trần trụi.
+                            let text = format::explain_error(&e.code, &e.message);
+                            ui.set_error_text(SharedString::from(text.as_str()));
                         }
                     }
                 }
@@ -1984,6 +2011,112 @@ mod tests {
         let before = ids.len();
         ids.dedup();
         assert_eq!(before, ids.len(), "duplicate command id in PALETTE");
+    }
+
+    /// Scratch directory next to the test binary.
+    ///
+    /// `CARGO_TARGET_TMPDIR` only exists for integration tests in `tests/`, not
+    /// for unit tests inside a binary, and `%TEMP%` is not writable on every
+    /// machine. Sitting beside the exe keeps the test self-contained.
+    fn scratch(name: &str) -> PathBuf {
+        let exe = std::env::current_exe().expect("đường dẫn exe");
+        let base = exe.parent().expect("thư mục chứa exe").join("test-scratch");
+        let dir = base.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tạo thư mục tạm");
+        dir
+    }
+
+    #[test]
+    fn creating_and_renaming_through_the_worker_reaches_disk() {
+        // Đúng đường đi của hộp thoại: dialog gửi Job, worker chạy, đĩa đổi.
+        // Test này bắt được lỗi "bấm Tạo mà không có gì xảy ra".
+        let root = scratch("worker-create");
+        let (worker, rx) = Worker::spawn();
+
+        worker.submit(Job::CreateFolder {
+            parent: root.clone(),
+            name: "tài liệu".into(),
+        });
+        match rx.recv_timeout(Duration::from_secs(10)).expect("worker phải trả lời") {
+            JobDone::OpDone { result, .. } => result.expect("tạo thư mục phải thành công"),
+            _ => panic!("cần OpDone"),
+        }
+        let created = root.join("tài liệu");
+        assert!(created.is_dir(), "thư mục phải có trên đĩa");
+
+        worker.submit(Job::Rename {
+            from: created.clone(),
+            to: "đã đổi tên".into(),
+        });
+        match rx.recv_timeout(Duration::from_secs(10)).expect("worker phải trả lời") {
+            JobDone::OpDone { result, .. } => result.expect("đổi tên phải thành công"),
+            _ => panic!("cần OpDone"),
+        }
+        assert!(root.join("đã đổi tên").is_dir(), "tên mới phải tồn tại");
+        assert!(!created.exists(), "tên cũ phải biến mất");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_empty_name_still_creates_a_folder() {
+        // Hộp thoại cho bấm "Tạo" khi ô trống; Rust tự đặt tên.
+        let root = scratch("worker-empty-name");
+        let (worker, rx) = Worker::spawn();
+        worker.submit(Job::CreateFolder {
+            parent: root.clone(),
+            name: String::new(),
+        });
+        match rx.recv_timeout(Duration::from_secs(10)).expect("worker phải trả lời") {
+            JobDone::OpDone { result, .. } => result.expect("tạo với tên rỗng phải thành công"),
+            _ => panic!("cần OpDone"),
+        }
+        let count = std::fs::read_dir(&root).unwrap().count();
+        assert_eq!(count, 1, "phải có đúng một thư mục được tạo");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn icon_work_never_blocks_file_operations() {
+        // Đây là hồi quy cho lỗi thật: icon và thao tác tệp từng chung một
+        // luồng, nên một icon chậm làm mọi lệnh tạo/đổi tên sau đó đứng im.
+        // Xếp 300 icon trước, rồi gửi lệnh tạo: lệnh tạo vẫn phải xong nhanh.
+        let root = scratch("worker-not-blocked");
+        let (worker, rx) = Worker::spawn();
+
+        let exe = std::env::current_exe().expect("đường dẫn exe");
+        for _ in 0..300 {
+            worker.submit_icon(exe.clone(), 20, 1);
+        }
+        worker.submit(Job::CreateFolder {
+            parent: root.clone(),
+            name: "sau-icon".into(),
+        });
+
+        let start = std::time::Instant::now();
+        // Bỏ qua các kết quả icon cho tới khi gặp OpDone.
+        loop {
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(JobDone::OpDone { result, .. }) => {
+                    result.expect("tạo thư mục phải thành công");
+                    break;
+                }
+                Ok(_) => continue,
+                Err(e) => panic!("worker không trả lời: {e}"),
+            }
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            root.join("sau-icon").is_dir(),
+            "thư mục phải được tạo dù có 300 icon xếp trước"
+        );
+        // Ngưỡng rộng: mục tiêu là bắt được việc bị chặn hẳn, không phải đo hiệu năng.
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "lệnh tạo bị chặn bởi icon: mất {elapsed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

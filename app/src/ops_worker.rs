@@ -70,12 +70,6 @@ pub enum Job {
     DeletePermanent {
         paths: Vec<PathBuf>,
     },
-    /// Read the Windows shell icon for one file.
-    ShellIcon {
-        path: PathBuf,
-        size: u32,
-        token: u64,
-    },
 }
 
 /// Result of a job.
@@ -108,17 +102,21 @@ pub enum JobDone {
 
 pub struct Worker {
     tx: Sender<Job>,
-    /// Folder sizes run on their own thread so a slow tree cannot delay a copy,
-    /// a delete, or the next navigation. Each job carries the directory token it
-    /// belongs to; the UI drops replies whose token is stale.
-    size_tx: Sender<SizeJob>,
+    /// Cosmetic background work: folder sizes and shell icons.
+    ///
+    /// These run on their own thread, never on the operation queue. They are
+    /// best-effort decorations, and a slow one — a folder tree on a sleeping
+    /// drive, a shortcut pointing at an unreachable network path — must never
+    /// delay a create, a rename, or a delete. Putting them here was a real bug:
+    /// one stuck icon made every later file operation wait forever, which reads
+    /// to the user as "adding and renaming do not work".
+    aux_tx: Sender<AuxJob>,
 }
 
-/// A folder-size request, separate from `Job` because it is cancellable by
-/// staleness rather than by finishing.
-pub struct SizeJob {
-    pub path: PathBuf,
-    pub token: u64,
+/// Best-effort work that only decorates the list.
+pub enum AuxJob {
+    Size { path: PathBuf, token: u64 },
+    Icon { path: PathBuf, size: u32, token: u64 },
 }
 
 impl Worker {
@@ -141,28 +139,36 @@ impl Worker {
             })
             .expect("spawn worker thread");
 
-        // Second thread, same result channel: sizes and operations are
-        // independent, and one slow folder must not stall the other.
-        let (size_tx, size_rx) = channel::<SizeJob>();
-        let size_done = done_tx.clone();
+        // Second thread, same result channel: decorations are independent of
+        // operations, and one slow folder must not stall the other.
+        let (aux_tx, aux_rx) = channel::<AuxJob>();
+        let aux_done = done_tx.clone();
         thread::Builder::new()
-            .name("files-size".into())
+            .name("files-bg".into())
             .spawn(move || {
-                while let Ok(job) = size_rx.recv() {
-                    let bytes = files_fs::directory_size(&job.path);
-                    let done = JobDone::FolderSize {
-                        path: job.path,
-                        bytes,
-                        token: job.token,
+                while let Ok(job) = aux_rx.recv() {
+                    let done = match job {
+                        AuxJob::Size { path, token } => JobDone::FolderSize {
+                            bytes: files_fs::directory_size(&path),
+                            path,
+                            token,
+                        },
+                        AuxJob::Icon { path, size, token } => {
+                            match files_fs::shell_icon(&path, size) {
+                                Ok(Some(icon)) => JobDone::ShellIcon { path, icon, token },
+                                // No icon is not an error: the row keeps its glyph.
+                                Ok(None) | Err(_) => continue,
+                            }
+                        }
                     };
-                    if size_done.send(done).is_err() {
+                    if aux_done.send(done).is_err() {
                         break;
                     }
                 }
             })
-            .expect("spawn size thread");
+            .expect("spawn background thread");
 
-        (Self { tx: job_tx, size_tx }, done_rx)
+        (Self { tx: job_tx, aux_tx }, done_rx)
     }
 
     pub fn submit(&self, job: Job) {
@@ -173,7 +179,12 @@ impl Worker {
 
     /// Queue a folder-size walk. Replies are tagged with `token`.
     pub fn submit_size(&self, path: PathBuf, token: u64) {
-        let _ = self.size_tx.send(SizeJob { path, token });
+        let _ = self.aux_tx.send(AuxJob::Size { path, token });
+    }
+
+    /// Queue a Windows shell icon lookup. Replies are tagged with `token`.
+    pub fn submit_icon(&self, path: PathBuf, size: u32, token: u64) {
+        let _ = self.aux_tx.send(AuxJob::Icon { path, size, token });
     }
 }
 
@@ -278,16 +289,6 @@ fn run(job: Job) -> JobDone {
                 Err(e) => JobDone::OpDone {
                     label: format!("Xoá vĩnh viễn lỗi: {}", e.message),
                     result: Err(e),
-                },
-            }
-        }
-        Job::ShellIcon { path, size, token } => {
-            match files_fs::shell_icon(&path, size) {
-                Ok(Some(icon)) => JobDone::ShellIcon { path, icon, token },
-                // No icon is not an error: the row keeps its Fluent glyph.
-                Ok(None) | Err(_) => JobDone::OpDone {
-                    label: String::new(),
-                    result: Ok(()),
                 },
             }
         }

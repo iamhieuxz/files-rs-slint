@@ -95,6 +95,28 @@ pub fn format_time(ms: Option<i64>) -> String {
     }
 }
 
+/// A message worth showing to the user for `err`.
+///
+/// `io::Error`'s own text ("Access is denied. (os error 5)") says what Windows
+/// refused but not what the person can do about it. The common cases get an
+/// actionable sentence; everything else keeps the original detail so a real bug
+/// is still reportable.
+pub fn explain_error(code: &str, message: &str) -> String {
+    match code {
+        "access_denied" => format!(
+            "Không có quyền ghi vào thư mục này. Hãy chọn thư mục khác, hoặc chạy \
+             ứng dụng bằng tài khoản có quyền. ({message})"
+        ),
+        "not_found" => format!(
+            "Không tìm thấy tệp hoặc thư mục — có thể nó vừa bị di chuyển hoặc xoá. ({message})"
+        ),
+        "invalid_name" => format!(
+            "Tên không hợp lệ: không được để trống và không chứa các ký tự \\ / : * ? \" < > |. ({message})"
+        ),
+        _ => message.to_string(),
+    }
+}
+
 /// Name shown in the list: the raw name, or without its extension when the user
 /// turned extensions off. A folder is never stripped, and a name that is *only*
 /// an extension (`.gitignore`) is left alone so it does not become empty.
@@ -248,6 +270,19 @@ mod tests {
     fn pinned_folders_have_their_own_colours() {
         assert_eq!(folder_glyph("Downloads").0, "arrow_download");
         assert_eq!(folder_glyph("Something Else").0, "folder");
+    }
+
+    #[test]
+    fn access_denied_explains_what_to_do() {
+        let text = explain_error("access_denied", "Access is denied. (os error 5)");
+        assert!(text.contains("quyền"), "phải nói về quyền: {text}");
+        assert!(text.contains("Access is denied"), "giữ chi tiết gốc để còn báo lỗi: {text}");
+    }
+
+    #[test]
+    fn unknown_codes_keep_the_original_message() {
+        // Đừng nuốt mất chi tiết lạ: đó có thể là manh mối của một lỗi thật.
+        assert_eq!(explain_error("io_error", "đĩa hỏng"), "đĩa hỏng");
     }
 
     #[test]
