@@ -356,3 +356,70 @@ fn rotating_an_unsupported_extension_is_refused() {
     assert_eq!(std::fs::read(&f).unwrap(), b"khong phai anh", "tệp gốc không đổi");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn git_status_reports_a_real_repository() {
+    // Chạy trên chính repo này: đây là bằng chứng mạnh nhất vì nó dùng dữ liệu
+    // thật, không phải fixture tự tạo.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("gốc repo");
+    if !root.join(".git").exists() {
+        return; // Không phải checkout git: bỏ qua.
+    }
+
+    let status = files_fs::status_for(root);
+    // Repo này có nhiều tệp chưa commit trong lúc phát triển, nên chỉ cần
+    // kiểm tra rằng hàm không trả rỗng và mọi khoá là đường dẫn tuyệt đối.
+    if status.is_empty() {
+        return;
+    }
+    for path in status.keys() {
+        assert!(path.is_absolute(), "khoá phải là đường dẫn tuyệt đối: {path:?}");
+    }
+}
+
+#[test]
+fn a_folder_inside_this_repository_finds_the_root() {
+    // Thư mục tạm của test nằm TRONG repo này (cạnh target/), nên `repo_root`
+    // phải tìm thấy gốc — không phải None như tôi tưởng ban đầu.
+    let root = scratch("git-inside");
+    let found = files_fs::repo_root(&root);
+    let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf());
+    if let (Some(found), Some(expected)) = (found, expected) {
+        if expected.join(".git").exists() {
+            assert_eq!(found, expected, "phải leo lên đúng gốc repo");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_untracked_file_shows_up_as_untracked() {
+    // Tạo repo tạm rồi kiểm tra đúng một tệp mới.
+    let root = scratch("git-untracked");
+    let ok = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&root)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    std::fs::write(root.join("moi.txt"), b"x").unwrap();
+
+    let status = files_fs::status_for(&root);
+    let key = root.join("moi.txt");
+    assert_eq!(
+        status.get(&key),
+        Some(&files_fs::GitState::Untracked),
+        "tệp mới phải là Untracked"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

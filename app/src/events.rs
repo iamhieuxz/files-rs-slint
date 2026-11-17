@@ -197,6 +197,18 @@ pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                         ));
                     }
                 }
+                Ok(JobDone::GitStatus { dir, status, token }) => {
+                    if token != a.borrow().load_token {
+                        continue;
+                    }
+                    // Chỉ áp dụng nếu vẫn đang ở đúng thư mục đó.
+                    let still_here = a.borrow().tab().current() == dir.as_path();
+                    if !still_here {
+                        continue;
+                    }
+                    a.borrow_mut().git_status = status;
+                    push_view(&ui, &a);
+                }
                 Ok(JobDone::Thumbnail { path, image, token }) => {
                     if token != a.borrow().load_token {
                         continue;

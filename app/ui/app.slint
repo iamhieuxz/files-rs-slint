@@ -26,6 +26,9 @@ export struct FileRow {
     kind: string,
     icon: string,
     glyph: color,
+    // Chữ cái trạng thái git (U/M/S/D/!), rỗng khi không có hoặc không phải repo.
+    git-letter: string,
+    git-color: color,
     // Icon thật của Windows (exe, msi, lnk…). Rỗng thì dùng `icon` + `glyph`.
     icon-image: image,
     has-icon-image: bool,
@@ -756,6 +759,9 @@ export component AppWindow inherits Window {
                                 }
                                 TouchArea { clicked => { root.sort-by("kind"); } }
                             }
+                            // Ô trống cho cột trạng thái git, để tiêu đề và dữ
+                            // liệu thẳng cột.
+                            Rectangle { width: 16px; }
                             Rectangle {
                                 width: Theme.col-size;
                                 Text {
@@ -878,6 +884,20 @@ export component AppWindow inherits Window {
                                             font-size: Theme.font-caption;
                                             vertical-alignment: center;
                                             overflow: elide;
+                                        }
+                                        // Trạng thái git: một chữ cái, chỉ hiện khi
+                                        // thư mục là repo và tệp có thay đổi.
+                                        Rectangle {
+                                            width: 16px;
+                                            height: parent.height;
+                                            if row.git-letter != "": Text {
+                                                text: row.git-letter;
+                                                color: row.git-color;
+                                                font-size: Theme.font-caption;
+                                                font-weight: Theme.weight-semibold;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
                                         }
                                         Text {
                                             width: Theme.col-size;

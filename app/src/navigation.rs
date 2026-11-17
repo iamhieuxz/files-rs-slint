@@ -146,6 +146,19 @@ pub fn apply_listing(ui: &AppWindow, app: &Rc<RefCell<App>>, listing: files_core
     // không làm chậm lần vẽ đầu.
     queue_shell_icons(app);
     queue_thumbnails(app);
+    // Chỉ hỏi git khi thư mục thật sự nằm trong một repo: gọi `git` cho mọi
+    // thư mục là lãng phí và có thể chậm trên ổ mạng.
+    {
+        let (dir, token) = {
+            let s = app.borrow();
+            (s.tab().current().to_path_buf(), s.load_token)
+        };
+        if files_fs::repo_root(&dir).is_some() {
+            app.borrow().worker.submit(ops_worker::Job::GitStatus { dir, token });
+        } else {
+            app.borrow_mut().git_status.clear();
+        }
+    }
 
     // Bảng thuộc tính của mục đầu tiên: bỏ trống thì panel trông như hỏng.
     let first = {

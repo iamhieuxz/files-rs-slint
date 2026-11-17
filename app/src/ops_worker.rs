@@ -71,6 +71,11 @@ pub enum Job {
     FolderSize {
         path: PathBuf,
     },
+    /// Đọc trạng thái git của một thư mục.
+    GitStatus {
+        dir: PathBuf,
+        token: u64,
+    },
     /// Tạo ảnh thu nhỏ cho một tệp ảnh.
     Thumbnail {
         path: PathBuf,
@@ -115,6 +120,12 @@ pub enum JobDone {
     FolderSize {
         path: PathBuf,
         bytes: u64,
+        token: u64,
+    },
+    /// Trạng thái git của một thư mục.
+    GitStatus {
+        dir: PathBuf,
+        status: files_fs::StatusMap,
         token: u64,
     },
     /// Ảnh thu nhỏ đã giải mã.
@@ -428,6 +439,12 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 Err(e) => (format!("Tính mã băm lỗi: {}", e.message), Err(e)),
             };
             JobDone::OpDone { label, result, undo: None }
+        }
+        Job::GitStatus { dir, token } => {
+            // `git status` trên một repo lớn có thể mất vài trăm ms; chạy ở
+            // luồng nền nên UI không bị treo.
+            let status = files_fs::status_for(&dir);
+            JobDone::GitStatus { dir, status, token }
         }
         Job::Thumbnail { path, size, token } => {
             match files_fs::thumbnail(&path, size) {

@@ -51,6 +51,19 @@ pub fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 kind: SharedString::from(format::kind_label(e).as_str()),
                 icon: SharedString::from(icon),
                 glyph: color_from_u32(glyph),
+                // Trạng thái git của đúng đường dẫn này, nếu thư mục là repo.
+                git_letter: SharedString::from(
+                    a.git_status
+                        .get(Path::new(&e.path))
+                        .map(|g| g.letter())
+                        .unwrap_or(""),
+                ),
+                git_color: color_from_u32(
+                    a.git_status
+                        .get(Path::new(&e.path))
+                        .map(|g| g.color())
+                        .unwrap_or(0),
+                ),
                 // Icon thật của Windows cho loại tệp có (exe, msi, lnk…).
                 // Ảnh được nạp ở luồng nền rồi điền vào sau.
                 icon_image: slint::Image::default(),
@@ -356,6 +369,7 @@ mod tests {
             settings: crate::settings::Settings::default(),
             settings_path: std::path::PathBuf::from("C:\\s.json"),
             undo: Default::default(),
+            git_status: Default::default(),
         };
         // Tab chua doc lan nao: khong co entry nao.
         assert!(app.tab().entries.is_empty());

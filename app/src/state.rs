@@ -121,6 +121,8 @@ pub struct App {
     pub settings_path: PathBuf,
     /// Lịch sử hoàn tác cho các thao tác tệp.
     pub undo: crate::undo::UndoStack,
+    /// Trạng thái git của thư mục đang xem, đọc một lần khi mở thư mục.
+    pub git_status: files_fs::StatusMap,
 }
 
 impl App {

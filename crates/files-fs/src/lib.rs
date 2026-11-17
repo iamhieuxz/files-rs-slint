@@ -8,6 +8,7 @@
 pub mod archive;
 pub mod assoc;
 pub mod drives;
+pub mod gitstatus;
 pub mod listing;
 pub mod log;
 pub mod ops;
@@ -19,6 +20,7 @@ pub use assoc::{open_settings_page, register as register_file_assoc, unregister 
 pub use archive::{archive_name, create_zip, extract_zip, hash_file, HashKind};
 pub use drives::{list_drives, DriveInfo};
 pub use log::set_log_sink;
+pub use gitstatus::{repo_root, status_for, GitState, StatusMap};
 pub use listing::read_dir;
 pub use search::{search, SearchHit, SearchOptions};
 pub use shellicon::{shell_icon, thumbnail, wants_shell_icon, RgbaIcon};

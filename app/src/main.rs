@@ -98,6 +98,7 @@ fn main() -> Result<(), slint::PlatformError> {
         settings: saved,
         settings_path,
         undo: Default::default(),
+        git_status: Default::default(),
     }));
 
     build_sidebar(&ui, &app.borrow());
