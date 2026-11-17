@@ -121,10 +121,10 @@ Hiện trạng đã kiểm chứng: không có chức năng hoàn tác nào (kh�
 
 ### 5.2 Tiến trình và huỷ thao tác
 
-- [ ] **5.2.1** Báo cáo tiến trình từ `ops_worker` về UI (số tệp đã xử lý, tổng, byte nếu có).
-- [ ] **5.2.2** Thanh tiến trình trong status bar, có nút Huỷ.
-- [ ] **5.2.3** Huỷ an toàn: dừng ở ranh giới tệp, dọn tệp đích dở dang.
-- [ ] **5.2.4** Khi đích đã tồn tại, `copy_into`/`move_into` trả lỗi `exists` (đã kiểm chứng trong `files-fs/src/ops.rs`). Ứng dụng KHÔNG ghi đè và cũng không hỏi. Cần quyết định: giữ hành vi "từ chối", hay thêm hộp thoại Thay thế/Bỏ qua/Giữ cả hai (kiểu Files gốc).
+- [x] **5.2.1** Báo cáo tiến trình từ `ops_worker` về UI (số tệp đã xử lý, tổng, byte nếu có). (`ops_worker::Progress` (atomic, chia sẻ giữa UI và worker). `run_batch` báo tiến trình và dừng khi bị huỷ. Không gửi thông điệp cho từng tệp — UI hỏi theo nhịp 120 ms.)
+- [x] **5.2.2** Thanh tiến trình trong status bar, có nút Huỷ. (Thanh tiến trình 80×4 px và nút **Huỷ** trong status bar; chỉ hiện khi biết tỉ lệ thật và còn việc để huỷ.)
+- [x] **5.2.3** Huỷ an toàn: dừng ở ranh giới tệp, dọn tệp đích dở dang. (Huỷ chỉ đặt cờ; worker dừng ở ranh giới tệp kế tiếp nên không bao giờ bỏ dở một tệp đang chép. Mục đã xong vẫn được ghi vào lịch sử hoàn tác.)
+- [x] **5.2.4** Khi đích đã tồn tại, `copy_into`/`move_into` trả lỗi `exists` (đã kiểm chứng trong `files-fs/src/ops.rs`). Ứng dụng KHÔNG ghi đè và cũng không hỏi. Cần quyết định: giữ hành vi "từ chối", hay thêm hộp thoại Thay thế/Bỏ qua/Giữ cả hai (kiểu Files gốc). (Đã quyết định: thêm `ConflictPolicy` gồm **Bỏ qua** (mặc định, hành vi cũ), **Giữ cả hai** (đổi tên), **Thay thế**. `ask_paste` chỉ bật hộp thoại khi thật sự có tên trùng.)
 
 ### 5.3 Kéo-thả
 
@@ -197,3 +197,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-17 | 4.1–4.10 | Hoàn thành giai đoạn 4. `main.rs` 2408 → **240 dòng**; module lớn nhất `wiring.rs` 467 dòng. Mỗi bước một commit riêng, test và chạy app sau từng bước. Test 138/138 pass, clippy 0 cảnh báo. |
 | 2026-11-18 | 0.1, 0.3, 0.4, 0.5 | Đo lại: 136 test pass, release 19,0 MB. Thêm CI GitHub Actions. Chụp được 2/4 ảnh nền tảng; 2 ảnh lưới cần chụp tay. |
 | 2026-11-18 | 5.1 | Hoàn tác/làm lại: `undo.rs` + gắn vào worker (mỗi `OpDone` mang theo cách hoàn tác), Ctrl+Z/Ctrl+Y, có trong Command Palette. Xoá vĩnh viễn không hoàn tác được và hộp thoại nói rõ. 9 test mới; tổng 81 test app, 145 toàn workspace. |
+| 2026-11-18 | 5.2 | Tiến trình + huỷ: `Progress` chia sẻ, thanh tiến trình và nút Huỷ ở status bar, huỷ ở ranh giới tệp. Thêm `ConflictPolicy` (Bỏ qua/Giữ cả hai/Thay thế) với hộp thoại chỉ hiện khi trùng tên thật. 12 test mới (9 worker + 3 files-fs). |

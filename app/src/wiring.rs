@@ -6,6 +6,7 @@
 //! belongs in the module it calls.
 
 use crate::commands::{menu, menu_tag, palette_model, run_command};
+use crate::file_ops;
 use crate::dialogs::confirm_dialog;
 use crate::navigation::{navigate_to, open_row, reload};
 use crate::selection::select_row;
@@ -272,6 +273,26 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 s.tab_mut().rebuild_visible();
             }
             push_view(&ui, &a);
+        });
+    }
+    {
+        // Nút phụ của hộp thoại trùng tên: "Thay thế".
+        let (w, a) = (ui.as_weak(), app.clone());
+        ui.on_dialog_secondary(move || {
+            let Some(ui) = w.upgrade() else { return };
+            ui.set_dialog_open(false);
+            file_ops::do_paste_with(&ui, &a, files_fs::ConflictPolicy::Replace);
+        });
+    }
+    {
+        // Huỷ thao tác đang chạy: chỉ đặt cờ, worker dừng ở ranh giới tệp kế
+        // tiếp. Không cắt ngang một tệp đang chép dở.
+        let (w, a) = (ui.as_weak(), app.clone());
+        ui.on_cancel_operation(move || {
+            let Some(ui) = w.upgrade() else { return };
+            a.borrow().worker.progress().request_cancel();
+            ui.set_busy_text(SharedString::from("Đang huỷ…"));
+            ui.set_cancellable(false);
         });
     }
     {

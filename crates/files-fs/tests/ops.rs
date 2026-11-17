@@ -189,3 +189,71 @@ fn directory_size_of_a_missing_folder_is_zero_not_a_panic() {
     assert_eq!(files_fs::directory_size(&missing), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn keep_both_renames_instead_of_overwriting() {
+    // "Giữ cả hai": mục cũ phải còn nguyên, mục mới mang tên khác.
+    let root = scratch("keep-both");
+    let src_dir = root.join("nguon");
+    let dst_dir = root.join("dich");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    let src = src_dir.join("bao-cao.txt");
+    std::fs::write(&src, b"noi dung moi").unwrap();
+    // Đã có sẵn tệp cùng tên ở đích.
+    std::fs::write(dst_dir.join("bao-cao.txt"), b"noi dung cu").unwrap();
+
+    let dest = ops::copy_into_with(&src, &dst_dir, ops::ConflictPolicy::KeepBoth)
+        .expect("phải chép được");
+
+    assert_ne!(dest, dst_dir.join("bao-cao.txt"), "không được ghi đè");
+    assert_eq!(
+        std::fs::read(dst_dir.join("bao-cao.txt")).unwrap(),
+        b"noi dung cu",
+        "tệp cũ phải nguyên vẹn"
+    );
+    assert_eq!(std::fs::read(&dest).unwrap(), b"noi dung moi");
+    assert!(dest.exists(), "bản mới phải tồn tại");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn replace_overwrites_the_old_file() {
+    let root = scratch("replace");
+    let src_dir = root.join("nguon");
+    let dst_dir = root.join("dich");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    let src = src_dir.join("t.txt");
+    std::fs::write(&src, b"moi").unwrap();
+    std::fs::write(dst_dir.join("t.txt"), b"cu").unwrap();
+
+    let dest = ops::copy_into_with(&src, &dst_dir, ops::ConflictPolicy::Replace)
+        .expect("phải chép được");
+
+    assert_eq!(dest, dst_dir.join("t.txt"), "ghi đè đúng chỗ");
+    assert_eq!(std::fs::read(&dest).unwrap(), b"moi");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_default_policy_still_refuses_to_overwrite() {
+    // Hành vi cũ phải giữ nguyên: không bao giờ âm thầm mất dữ liệu.
+    let root = scratch("fail-policy");
+    let src_dir = root.join("nguon");
+    let dst_dir = root.join("dich");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    let src = src_dir.join("t.txt");
+    std::fs::write(&src, b"moi").unwrap();
+    std::fs::write(dst_dir.join("t.txt"), b"cu").unwrap();
+
+    let err = ops::copy_into(&src, &dst_dir).expect_err("phải từ chối");
+    assert_eq!(err.code, "exists");
+    assert_eq!(
+        std::fs::read(dst_dir.join("t.txt")).unwrap(),
+        b"cu",
+        "tệp cũ không được đổi"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

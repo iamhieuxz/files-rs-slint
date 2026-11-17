@@ -137,6 +137,10 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
             }
         }
         "confirm-default" => register_association(ui),
+        // Nút chính của hộp thoại trùng tên là "Giữ cả hai".
+        "paste-conflict" => {
+            crate::file_ops::do_paste_with(ui, app, files_fs::ConflictPolicy::KeepBoth)
+        }
         "confirm-delete-permanent" => {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {

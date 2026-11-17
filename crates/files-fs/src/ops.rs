@@ -109,10 +109,20 @@ pub fn delete_to_recycle_bin(paths: &[PathBuf]) -> Result<usize, FsError> {
 /// than silently overwriting, which is what the Shell asks the user about; the
 /// UI turns that into a "keep both" prompt.
 pub fn copy_into(source: &Path, target_dir: &Path) -> Result<PathBuf, FsError> {
-    let name = source
-        .file_name()
-        .ok_or_else(|| FsError::new("invalid_path", "Không xác định được tên mục"))?;
-    let dest = target_dir.join(name);
+    copy_into_with(source, target_dir, ConflictPolicy::Fail)
+}
+
+/// Như [`copy_into`] nhưng chỉ rõ cách xử lý trùng tên.
+pub fn copy_into_with(
+    source: &Path,
+    target_dir: &Path,
+    policy: ConflictPolicy,
+) -> Result<PathBuf, FsError> {
+    let dest = resolve_destination(source, target_dir, policy)?;
+    if dest.exists() && policy == ConflictPolicy::Replace {
+        // Xoá trước khi ghi: `fs::copy` sẽ lỗi nếu đích đang tồn tại.
+        let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
+    }
     if dest.exists() {
         return Err(FsError::new(
             "exists",
@@ -125,10 +135,19 @@ pub fn copy_into(source: &Path, target_dir: &Path) -> Result<PathBuf, FsError> {
 
 /// Move one entry into `target_dir`.
 pub fn move_into(source: &Path, target_dir: &Path) -> Result<PathBuf, FsError> {
-    let name = source
-        .file_name()
-        .ok_or_else(|| FsError::new("invalid_path", "Không xác định được tên mục"))?;
-    let dest = target_dir.join(name);
+    move_into_with(source, target_dir, ConflictPolicy::Fail)
+}
+
+/// Như [`move_into`] nhưng chỉ rõ cách xử lý trùng tên.
+pub fn move_into_with(
+    source: &Path,
+    target_dir: &Path,
+    policy: ConflictPolicy,
+) -> Result<PathBuf, FsError> {
+    let dest = resolve_destination(source, target_dir, policy)?;
+    if dest.exists() && policy == ConflictPolicy::Replace {
+        let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
+    }
     if dest.exists() {
         return Err(FsError::new(
             "exists",
@@ -236,6 +255,65 @@ fn unique_path(parent: &Path, base: &str, extension: &str) -> PathBuf {
         }
     }
     first
+}
+
+/// Cách xử lý khi mục đích đã tồn tại.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConflictPolicy {
+    /// Từ chối và báo lỗi — hành vi cũ, an toàn nhất.
+    #[default]
+    Fail,
+    /// Đổi tên mục mới thành "tên (2)" rồi tiếp tục.
+    KeepBoth,
+    /// Xoá mục cũ rồi ghi đè.
+    Replace,
+}
+
+impl ConflictPolicy {
+    /// Nhãn hiển thị trong hộp thoại.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fail => "Bỏ qua",
+            Self::KeepBoth => "Giữ cả hai",
+            Self::Replace => "Thay thế",
+        }
+    }
+}
+
+/// Đường dẫn đích cho một mục, theo `policy`.
+///
+/// `KeepBoth` dùng `unique_path` để không đè lên bất cứ thứ gì; `Replace` trả
+/// đúng đường dẫn cũ để hàm gọi tự xoá trước khi ghi.
+fn resolve_destination(
+    source: &Path,
+    target_dir: &Path,
+    policy: ConflictPolicy,
+) -> Result<PathBuf, FsError> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| FsError::new("invalid_path", "Không xác định được tên mục"))?;
+    let dest = target_dir.join(name);
+    if !dest.exists() {
+        return Ok(dest);
+    }
+    match policy {
+        ConflictPolicy::Fail => Err(FsError::new(
+            "exists",
+            format!("Đã tồn tại: {}", dest.display()),
+        )),
+        ConflictPolicy::KeepBoth => {
+            let stem = source
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Bản sao".into());
+            let ext = source
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy()))
+                .unwrap_or_default();
+            Ok(unique_path(target_dir, &stem, &ext))
+        }
+        ConflictPolicy::Replace => Ok(dest),
+    }
 }
 
 /// Human-readable label for a copy of `source` that will not collide.

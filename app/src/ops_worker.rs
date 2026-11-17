@@ -11,7 +11,9 @@
 use files_core::sort::ListOptions;
 use files_core::{FsError, Listing, SortSpec};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 /// One unit of background work.
@@ -27,10 +29,13 @@ pub enum Job {
     Copy {
         sources: Vec<PathBuf>,
         target: PathBuf,
+        /// Cách xử lý khi đích đã tồn tại.
+        policy: files_fs::ConflictPolicy,
     },
     Move {
         sources: Vec<PathBuf>,
         target: PathBuf,
+        policy: files_fs::ConflictPolicy,
     },
     Delete {
         paths: Vec<PathBuf>,
@@ -102,6 +107,71 @@ pub enum JobDone {
     },
 }
 
+/// Tiến trình của thao tác đang chạy, chia sẻ giữa UI và luồng worker.
+///
+/// UI đọc bằng cách hỏi theo nhịp (`snapshot`) chứ không nhận thông điệp cho
+/// từng tệp: một thư mục 10.000 tệp sẽ làm ngập kênh kết quả, và UI chỉ cần
+/// vẽ lại vài chục lần mỗi giây là đủ.
+///
+/// `total == 0` nghĩa là không có thao tác nào đang chạy.
+pub struct Progress {
+    total: AtomicUsize,
+    done: AtomicUsize,
+    cancel: AtomicBool,
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Self {
+            total: AtomicUsize::new(0),
+            done: AtomicUsize::new(0),
+            cancel: AtomicBool::new(false),
+        }
+    }
+}
+
+impl Progress {
+    /// Bắt đầu một thao tác gồm `total` mục.
+    pub fn begin(&self, total: usize) {
+        self.done.store(0, Ordering::Relaxed);
+        self.cancel.store(false, Ordering::Relaxed);
+        // Đặt `total` SAU cùng: UI thấy total khác 0 là biết thao tác đã bắt đầu,
+        // và lúc đó `done`/`cancel` đã ở trạng thái đúng.
+        self.total.store(total, Ordering::Release);
+    }
+
+    /// Đánh dấu xong một mục.
+    pub fn tick(&self) {
+        self.done.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Kết thúc thao tác (thành công, lỗi, hoặc bị huỷ).
+    pub fn finish(&self) {
+        self.total.store(0, Ordering::Release);
+        self.done.store(0, Ordering::Relaxed);
+        self.cancel.store(false, Ordering::Relaxed);
+    }
+
+    /// Người dùng bấm Huỷ. Thao tác dừng ở ranh giới tệp kế tiếp.
+    pub fn request_cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Đã được yêu cầu huỷ chưa. Worker hỏi trước mỗi tệp.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// `Some((đã xong, tổng))` khi có thao tác đang chạy.
+    pub fn snapshot(&self) -> Option<(usize, usize)> {
+        let total = self.total.load(Ordering::Acquire);
+        if total == 0 {
+            return None;
+        }
+        Some((self.done.load(Ordering::Relaxed), total))
+    }
+}
+
 pub struct Worker {
     tx: Sender<Job>,
     /// Cosmetic background work: folder sizes and shell icons.
@@ -113,6 +183,8 @@ pub struct Worker {
     /// one stuck icon made every later file operation wait forever, which reads
     /// to the user as "adding and renaming do not work".
     aux_tx: Sender<AuxJob>,
+    /// Tiến trình của thao tác đang chạy, dùng chung với luồng worker.
+    progress: Arc<Progress>,
 }
 
 /// Best-effort work that only decorates the list.
@@ -130,12 +202,14 @@ impl Worker {
         let (job_tx, job_rx) = channel::<Job>();
         let (done_tx, done_rx) = channel::<JobDone>();
         let main_done = done_tx.clone();
+        let progress = Arc::new(Progress::default());
+        let worker_progress = Arc::clone(&progress);
 
         thread::Builder::new()
             .name("files-worker".into())
             .spawn(move || {
                 while let Ok(job) = job_rx.recv() {
-                    let done = run(job);
+                    let done = run(job, &worker_progress);
                     // A closed channel means the UI is shutting down; stop.
                     if main_done.send(done).is_err() {
                         break;
@@ -171,13 +245,18 @@ impl Worker {
                 }
             })?;
 
-        Ok((Self { tx: job_tx, aux_tx }, done_rx))
+        Ok((Self { tx: job_tx, aux_tx, progress }, done_rx))
     }
 
     pub fn submit(&self, job: Job) {
         // A closed channel means the worker exited; the UI stays alive and the
         // user can retry, so dropping the job is the least-bad option.
         let _ = self.tx.send(job);
+    }
+
+    /// Tiến trình của thao tác đang chạy, nếu có.
+    pub fn progress(&self) -> &Arc<Progress> {
+        &self.progress
     }
 
     /// Queue a folder-size walk. Replies are tagged with `token`.
@@ -191,17 +270,24 @@ impl Worker {
     }
 }
 
-fn run(job: Job) -> JobDone {
+fn run(job: Job, progress: &Progress) -> JobDone {
     match job {
         Job::Load { path, sort, opts, token } => {
             let result = files_fs::read_dir(&path, sort, opts);
             JobDone::Loaded { token, path, result }
         }
-        Job::Copy { sources, target } => {
-            let (created, err) = run_batch(&sources, |src| files_fs::copy_into(src, &target));
-            let label = match &err {
-                Some(e) => format!("Sao chép lỗi: {}", e.message),
-                None => format!("Đã sao chép {}/{} mục", created.len(), sources.len()),
+        Job::Copy { sources, target, policy } => {
+            let (created, err, cancelled) =
+                run_batch(&sources, progress, |src| {
+                    files_fs::copy_into_with(src, &target, policy)
+                });
+            let label = if cancelled {
+                format!("Đã huỷ sau {}/{} mục", created.len(), sources.len())
+            } else {
+                match &err {
+                    Some(e) => format!("Sao chép lỗi: {}", e.message),
+                    None => format!("Đã sao chép {}/{} mục", created.len(), sources.len()),
+                }
             };
             let undo = created.is_empty().then_some(()).map_or(
                 Some(crate::undo::UndoAction::Copied {
@@ -213,11 +299,18 @@ fn run(job: Job) -> JobDone {
             );
             JobDone::OpDone { label, result: err.map_or(Ok(()), Err), undo }
         }
-        Job::Move { sources, target } => {
-            let (created, err) = run_batch(&sources, |src| files_fs::move_into(src, &target));
-            let label = match &err {
-                Some(e) => format!("Di chuyển lỗi: {}", e.message),
-                None => format!("Đã di chuyển {}/{} mục", created.len(), sources.len()),
+        Job::Move { sources, target, policy } => {
+            let (created, err, cancelled) =
+                run_batch(&sources, progress, |src| {
+                    files_fs::move_into_with(src, &target, policy)
+                });
+            let label = if cancelled {
+                format!("Đã huỷ sau {}/{} mục", created.len(), sources.len())
+            } else {
+                match &err {
+                    Some(e) => format!("Di chuyển lỗi: {}", e.message),
+                    None => format!("Đã di chuyển {}/{} mục", created.len(), sources.len()),
+                }
             };
             // Ghép nguồn với đích theo đúng thứ tự đã di chuyển thành công.
             let pairs: Vec<(PathBuf, PathBuf)> =
@@ -331,14 +424,29 @@ fn run(job: Job) -> JobDone {
 }
 
 /// Apply `op` to each source, counting successes and keeping the first error.
-fn run_batch<F>(sources: &[PathBuf], mut op: F) -> (Vec<PathBuf>, Option<FsError>)
+/// Áp `op` lên từng nguồn, báo tiến trình và dừng khi bị huỷ.
+///
+/// Trả về cả đường dẫn đích: hoàn tác cần biết chính xác cái gì đã được tạo.
+/// Mục đã xong trước khi huỷ vẫn nằm trong danh sách trả về — người dùng phải
+/// hoàn tác được đúng những gì đã thực sự xảy ra.
+fn run_batch<F>(
+    sources: &[PathBuf],
+    progress: &Progress,
+    mut op: F,
+) -> (Vec<PathBuf>, Option<FsError>, bool)
 where
     F: FnMut(&PathBuf) -> Result<PathBuf, FsError>,
 {
-    // Trả về cả đường dẫn đích: hoàn tác cần biết chính xác cái gì đã được tạo.
+    progress.begin(sources.len());
     let mut created = Vec::new();
     let mut first_err = None;
+    let mut cancelled = false;
     for src in sources {
+        // Dừng ở ranh giới tệp: không bao giờ bỏ dở một tệp đang chép.
+        if progress.cancelled() {
+            cancelled = true;
+            break;
+        }
         match op(src) {
             Ok(dest) => created.push(dest),
             Err(e) => {
@@ -347,12 +455,153 @@ where
                 }
             }
         }
+        progress.tick();
     }
-    (created, first_err)
+    progress.finish();
+    (created, first_err, cancelled)
 }
 
 fn file_label(p: &std::path::Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| p.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn scratch(name: &str) -> PathBuf {
+        let exe = std::env::current_exe().expect("đường dẫn exe");
+        let dir = exe
+            .parent()
+            .expect("thư mục chứa exe")
+            .join("test-scratch")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tạo thư mục tạm");
+        dir
+    }
+
+    #[test]
+    fn a_fresh_progress_reports_nothing_running() {
+        let p = Progress::default();
+        assert_eq!(p.snapshot(), None);
+    }
+
+    #[test]
+    fn begin_makes_a_snapshot_available() {
+        let p = Progress::default();
+        p.begin(5);
+        assert_eq!(p.snapshot(), Some((0, 5)));
+    }
+
+    #[test]
+    fn ticks_move_the_counter_and_stop_at_the_total() {
+        let p = Progress::default();
+        p.begin(3);
+        p.tick();
+        assert_eq!(p.snapshot(), Some((1, 3)));
+        p.tick();
+        p.tick();
+        assert_eq!(p.snapshot(), Some((3, 3)), "không vượt quá tổng");
+    }
+
+    #[test]
+    fn finish_clears_the_snapshot() {
+        let p = Progress::default();
+        p.begin(2);
+        p.tick();
+        p.finish();
+        assert_eq!(p.snapshot(), None);
+    }
+
+    #[test]
+    fn finish_also_resets_a_pending_cancel() {
+        // Nếu không xoá cờ, thao tác SAU sẽ bị huỷ ngay từ tệp đầu tiên.
+        let p = Progress::default();
+        p.begin(2);
+        p.request_cancel();
+        assert!(p.cancelled());
+        p.finish();
+        assert!(!p.cancelled(), "cờ huỷ phải được xoá khi kết thúc");
+    }
+
+    #[test]
+    fn begin_clears_a_stale_cancel_from_the_previous_run() {
+        let p = Progress::default();
+        p.begin(2);
+        p.request_cancel();
+        p.begin(2);
+        assert!(!p.cancelled(), "lần chạy mới không được thừa hưởng cờ cũ");
+    }
+
+    #[test]
+    fn cancelling_a_batch_stops_after_the_current_file() {
+        let root = scratch("cancel-batch");
+        let target = root.join("dich");
+        std::fs::create_dir_all(&target).unwrap();
+        let sources: Vec<PathBuf> = (0..5)
+            .map(|i| {
+                let p = root.join(format!("tep{i}.txt"));
+                std::fs::write(&p, b"x").unwrap();
+                p
+            })
+            .collect();
+
+        let p = Progress::default();
+        // Huỷ ngay sau tệp đầu tiên.
+        let p2 = &p;
+        let (created, err, cancelled) = run_batch(&sources, p2, |src| {
+            let r = files_fs::copy_into(src, &target);
+            p2.request_cancel();
+            r
+        });
+
+        assert!(cancelled, "phải báo là đã huỷ");
+        assert!(err.is_none(), "huỷ không phải lỗi");
+        assert_eq!(created.len(), 1, "dừng ngay sau tệp đang xử lý");
+        assert_eq!(
+            std::fs::read_dir(&target).unwrap().count(),
+            1,
+            "chỉ đúng một tệp được chép"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_completed_batch_reports_every_file() {
+        let root = scratch("full-batch");
+        let target = root.join("dich");
+        std::fs::create_dir_all(&target).unwrap();
+        let sources: Vec<PathBuf> = (0..3)
+            .map(|i| {
+                let p = root.join(format!("t{i}.txt"));
+                std::fs::write(&p, b"x").unwrap();
+                p
+            })
+            .collect();
+
+        let p = Progress::default();
+        let (created, err, cancelled) =
+            run_batch(&sources, &p, |src| files_fs::copy_into(src, &target));
+
+        assert!(!cancelled);
+        assert!(err.is_none());
+        assert_eq!(created.len(), 3);
+        assert_eq!(p.snapshot(), None, "kết thúc thì không còn tiến trình");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_worker_exposes_its_progress() {
+        // UI đọc tiến trình qua worker, nên accessor phải trả cùng một đối tượng.
+        let (worker, _rx) = Worker::spawn().expect("tạo worker");
+        assert_eq!(worker.progress().snapshot(), None);
+        worker.progress().begin(4);
+        assert_eq!(worker.progress().snapshot(), Some((0, 4)));
+        worker.progress().finish();
+        let _ = Duration::from_millis(1);
+    }
 }

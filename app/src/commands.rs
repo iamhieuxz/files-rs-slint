@@ -11,7 +11,7 @@ use crate::dialogs::{
     ask_delete, ask_delete_permanent, ask_new, ask_rename, show_new_menu, show_properties,
 };
 use crate::file_ops::{
-    compress_selection, copy_selected_path, do_paste, extract_selection, hash_selection,
+    ask_paste, compress_selection, copy_selected_path, extract_selection, hash_selection,
     open_terminal_here, redo_last, set_clipboard, undo_last, view_folder_size,
 };
 use crate::navigation::{open_row, reload};
@@ -76,7 +76,7 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "refresh" => reload(ui, app),
         "copy" => set_clipboard(ui, app, false),
         "cut" => set_clipboard(ui, app, true),
-        "paste" => do_paste(ui, app),
+        "paste" => ask_paste(ui, app),
         "delete" => ask_delete(ui, app),
         "rename" => ask_rename(ui, app),
         "new-folder" => ask_new(ui, "new-folder"),

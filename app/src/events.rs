@@ -24,6 +24,39 @@ use crate::format;
 /// `invoke_from_event_loop` would be simpler but cannot be called from a thread
 /// that outlives the component; a timer keeps the handoff inside the event loop
 /// and makes shutdown deterministic.
+/// Đẩy tiến trình của thao tác đang chạy lên UI theo nhịp.
+///
+/// Hỏi trạng thái thay vì nhận thông điệp cho từng tệp: kênh kết quả sẽ bị ngập
+/// với một thư mục lớn, còn UI chỉ cần vẽ lại vài chục lần mỗi giây.
+pub fn install_progress_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    use std::time::Duration;
+    let (w, a) = (ui.as_weak(), app.clone());
+    let timer = Timer::default();
+    timer.start(TimerMode::Repeated, Duration::from_millis(120), move || {
+        let Some(ui) = w.upgrade() else { return };
+        let snapshot = {
+            let a = a.borrow();
+            a.worker.progress().snapshot()
+        };
+        match snapshot {
+            Some((done, total)) if total > 0 => {
+                ui.set_progress(done as f32 / total as f32);
+                // Chỉ cho huỷ khi còn việc: huỷ một thao tác đã xong là vô nghĩa.
+                ui.set_cancellable(done < total);
+            }
+            _ => {
+                if ui.get_progress() != 0.0 {
+                    ui.set_progress(0.0);
+                }
+                if ui.get_cancellable() {
+                    ui.set_cancellable(false);
+                }
+            }
+        }
+    });
+    std::mem::forget(timer);
+}
+
 pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let (w, a) = (ui.as_weak(), app.clone());
     let timer = Timer::default();

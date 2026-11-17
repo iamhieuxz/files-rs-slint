@@ -66,7 +66,12 @@ pub fn set_clipboard(ui: &AppWindow, app: &Rc<RefCell<App>>, cut: bool) {
     ));
 }
 
-pub fn do_paste(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+/// Dán với cách xử lý trùng tên do người dùng chọn.
+pub fn do_paste_with(
+    ui: &AppWindow,
+    app: &Rc<RefCell<App>>,
+    policy: files_fs::ConflictPolicy,
+) {
     let (sources, target, cut) = {
         let s = app.borrow();
         (s.clipboard.clone(), s.tab().current().to_path_buf(), s.clipboard_cut)
@@ -77,11 +82,50 @@ pub fn do_paste(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.set_busy(true);
     ui.set_busy_text(SharedString::from(if cut { "Đang di chuyển…" } else { "Đang sao chép…" }));
     let job = if cut {
-        Job::Move { sources, target }
+        Job::Move { sources, target, policy }
     } else {
-        Job::Copy { sources, target }
+        Job::Copy { sources, target, policy }
     };
     app.borrow().worker.submit(job);
+}
+
+/// Kiểm tra trước khi dán: nếu có tên trùng thì hỏi người dùng.
+///
+/// Chỉ hỏi khi thật sự cần — một lần dán không trùng tên mà vẫn bật hộp thoại
+/// là làm phiền vô ích.
+pub fn ask_paste(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let (sources, target) = {
+        let s = app.borrow();
+        (s.clipboard.clone(), s.tab().current().to_path_buf())
+    };
+    if sources.is_empty() {
+        return;
+    }
+    let conflicts = sources
+        .iter()
+        .filter(|src| {
+            src.file_name()
+                .map(|n| target.join(n).exists())
+                .unwrap_or(false)
+        })
+        .count();
+    if conflicts == 0 {
+        do_paste_with(ui, app, files_fs::ConflictPolicy::Fail);
+        return;
+    }
+    ui.set_dialog_kind(SharedString::from("paste-conflict"));
+    ui.set_dialog_title(SharedString::from("Đã có mục cùng tên"));
+    ui.set_dialog_text(SharedString::from(
+        format!(
+            "{conflicts} mục đã tồn tại trong thư mục này. Chọn cách xử lý:              giữ cả hai (đổi tên mục mới), thay thế mục cũ, hoặc bỏ qua."
+        )
+        .as_str(),
+    ));
+    ui.set_dialog_primary_label(SharedString::from("Giữ cả hai"));
+    ui.set_dialog_secondary_label(SharedString::from("Thay thế"));
+    ui.set_dialog_has_input(false);
+    ui.set_dialog_allows_empty(false);
+    ui.set_dialog_open(true);
 }
 
 /// Compress the selection into `<name>.zip` in the current folder.

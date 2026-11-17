@@ -122,6 +122,11 @@ export component AppWindow inherits Window {
     in-out property <int> clipboard-count: 0;
     in-out property <bool> busy: false;
     in-out property <string> busy-text;
+    // Tiến trình của thao tác đang chạy: 0..1. Bằng 0 khi không có thao tác.
+    in-out property <float> progress: 0;
+    // Có thao tác đang chạy và huỷ được.
+    in-out property <bool> cancellable: false;
+    callback cancel-operation();
 
     // preview
     in-out property <string> preview-kind: "none";
@@ -142,6 +147,9 @@ export component AppWindow inherits Window {
     in-out property <bool> dialog-has-input: true;
     // Cho phép bấm nút chính khi ô nhập còn trống (lệnh tự sinh tên).
     in-out property <bool> dialog-allows-empty: false;
+    // Nhãn nút phụ (rỗng = không hiện). Dùng cho hộp thoại trùng tên khi dán.
+    in-out property <string> dialog-secondary-label;
+    callback dialog-secondary();
 
     // menu ngữ cảnh
     in-out property <bool> menu-open: false;
@@ -1040,19 +1048,44 @@ export component AppWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 if root.busy: HorizontalLayout {
-                    spacing: Theme.s1;
-                    FluentIcon {
-                        name: "arrow_clockwise";
-                        width: 12px;
-                        height: 12px;
+                    spacing: Theme.s2;
+                    // Thanh tiến trình: chỉ hiện khi biết tỉ lệ thật, để không
+                    // vẽ một thanh đứng yên trông như app treo.
+                    if root.progress > 0: Rectangle {
+                        width: 80px;
+                        height: 4px;
+                        border-radius: 2px;
                         y: (parent.height - self.height) / 2;
-                        tint: Theme.accent;
+                        background: Theme.stroke-divider;
+                        Rectangle {
+                            width: parent.width * root.progress;
+                            height: parent.height;
+                            border-radius: 2px;
+                            background: Theme.accent;
+                        }
                     }
                     Text {
                         text: root.busy-text;
                         color: Theme.text-secondary;
                         font-size: Theme.font-caption;
                         vertical-alignment: center;
+                    }
+                    if root.cancellable: Rectangle {
+                        width: 52px;
+                        height: 20px;
+                        border-radius: Theme.r-sm;
+                        y: (parent.height - self.height) / 2;
+                        background: cancel-ta.has-hover ? Theme.subtle-pressed : Theme.subtle-hover;
+                        Text {
+                            text: "Huỷ";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-caption;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        cancel-ta := TouchArea {
+                            clicked => { root.cancel-operation(); }
+                        }
                     }
                 }
                 Text {
@@ -1231,21 +1264,23 @@ export component AppWindow inherits Window {
             y: (parent.height - self.height) / 2;
             title: root.dialog-title;
             primary-label: root.dialog-primary-label;
+            secondary-label: root.dialog-secondary-label;
             // Lệnh tự sinh tên (thư mục/tệp mới) vẫn bấm được khi ô trống:
             // Rust sẽ chọn "Thư mục mới (2)" thay vì bắt người dùng gõ trước.
             primary-enabled: !root.dialog-has-input
                 || root.dialog-value != ""
                 || root.dialog-allows-empty;
             primary => { root.dialog-confirm(root.dialog-value); }
+            secondary => { root.dialog-secondary(); }
             cancelled => { root.dialog-cancel(); }
 
-            if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent" || root.dialog-kind == "confirm-default": Text {
+            if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent" || root.dialog-kind == "confirm-default" || root.dialog-kind == "paste-conflict": Text {
                 text: root.dialog-text;
                 color: Theme.text-secondary;
                 font-size: Theme.font-body;
                 wrap: word-wrap;
             }
-            if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent" && root.dialog-kind != "confirm-default": Rectangle {
+            if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent" && root.dialog-kind != "confirm-default" && root.dialog-kind != "paste-conflict": Rectangle {
                 // Ô nhập phải có khung nhìn thấy được: trước đây nó trong suốt
                 // nên hộp thoại đổi tên / tạo mới trông như không có chỗ gõ.
                 height: 36px;

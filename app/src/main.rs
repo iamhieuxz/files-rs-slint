@@ -38,7 +38,7 @@ use wiring::wire_callbacks;
 use navigation::{build_sidebar, reload};
 use state::{apply_saved_ui, settings_path, tag_store_path, App, Tab};
 use tabs::sync_tabs;
-use events::{install_result_pump, install_watch_pump};
+use events::{install_progress_pump, install_result_pump, install_watch_pump};
 use ops_worker::Worker;
 use slint::ComponentHandle;
 use std::cell::RefCell;
@@ -108,6 +108,7 @@ fn main() -> Result<(), slint::PlatformError> {
     sync_tabs(&ui, &app.borrow());
 
     wire_callbacks(&ui, &app);
+    install_progress_pump(&ui, &app);
     install_result_pump(&ui, &app);
     install_watch_pump(&ui, &app);
 
