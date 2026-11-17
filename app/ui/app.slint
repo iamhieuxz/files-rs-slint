@@ -1044,6 +1044,25 @@ export component AppWindow inherits Window {
                     font-size: Theme.font-caption;
                     vertical-alignment: center;
                 }
+                // Đặt app làm trình duyệt tệp mặc định. Cần người dùng xác
+                // nhận: hành động này đổi thứ Windows dùng cho mọi thao tác mở
+                // thư mục sau này, và Windows vẫn hỏi lại lần nữa ở Settings.
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: Theme.r-sm;
+                    y: (parent.height - self.height) / 2;
+                    background: default-ta.has-hover ? Theme.subtle-hover : transparent;
+                    FluentIcon {
+                        name: "star";
+                        width: 12px;
+                        height: 12px;
+                        x: 6px;
+                        y: 6px;
+                        tint: Theme.text-secondary;
+                    }
+                    default-ta := TouchArea { clicked => { root.command("register-assoc"); } }
+                }
                 Rectangle {
                     width: 24px;
                     height: 24px;
@@ -1199,13 +1218,13 @@ export component AppWindow inherits Window {
             primary => { root.dialog-confirm(root.dialog-value); }
             cancelled => { root.dialog-cancel(); }
 
-            if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent": Text {
+            if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent" || root.dialog-kind == "confirm-default": Text {
                 text: root.dialog-text;
                 color: Theme.text-secondary;
                 font-size: Theme.font-body;
                 wrap: word-wrap;
             }
-            if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent": Rectangle {
+            if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent" && root.dialog-kind != "confirm-default": Rectangle {
                 height: 32px;
                 dialog-input := TextInput {
                     vertical-alignment: center;

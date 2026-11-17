@@ -1255,7 +1255,7 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "delete-permanent" => ask_delete_permanent(ui, app),
         "copy-path" => copy_selected_path(ui, app),
         "open-terminal" => open_terminal_here(ui, app),
-        "register-assoc" => register_association(ui),
+        "register-assoc" => ask_register_association(ui),
         "open-default-apps" => open_default_apps(ui),
         // ---- hiển thị ----
         "toggle-extensions" => {
@@ -1406,12 +1406,28 @@ fn copy_selected_path(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 ///
 /// Windows không cho đặt mặc định bằng code; bước này chỉ làm app xuất hiện
 /// trong danh sách, còn quyết định cuối cùng là của người dùng.
+/// Hỏi trước khi đăng ký: đây là thay đổi có thể thấy được trên toàn hệ thống.
+fn ask_register_association(ui: &AppWindow) {
+    ui.set_dialog_kind(SharedString::from("confirm-default"));
+    ui.set_dialog_title(SharedString::from("Đặt làm trình duyệt tệp mặc định"));
+    ui.set_dialog_text(SharedString::from(
+        "Files RS sẽ được thêm vào danh sách ứng dụng mở thư mục. \
+         Windows sẽ mở trang Settings để bạn chọn — chỉ cần bấm một lần ở đó. \
+         Bạn có thể gỡ bỏ bất cứ lúc nào.",
+    ));
+    ui.set_dialog_primary_label(SharedString::from("Đăng ký"));
+    ui.set_dialog_has_input(false);
+    ui.set_dialog_value(SharedString::default());
+    ui.set_dialog_open(true);
+}
+
+/// Thực hiện đăng ký sau khi người dùng đã xác nhận.
 fn register_association(ui: &AppWindow) {
     let exe = std::env::current_exe().unwrap_or_default();
     match files_fs::register_file_assoc(&exe) {
         Ok(()) => {
             ui.set_status_tertiary(SharedString::from(
-                "Đã đăng ký. Mở Settings để chọn Files RS làm mặc định.",
+                "Đã đăng ký. Chọn Files RS trong trang Settings vừa mở.",
             ));
             let _ = files_fs::open_settings_page();
         }
@@ -1700,6 +1716,7 @@ fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
                 ui.set_busy_text(SharedString::from("Đang chuyển vào Thùng rác…"));
             }
         }
+        "confirm-default" => register_association(ui),
         "confirm-delete-permanent" => {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {

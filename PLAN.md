@@ -91,7 +91,7 @@ Header và hàng dữ liệu cùng đọc các token này, nên một cái tên 
 | Bỏ viền thừa | `no-frame: true` + title bar tự vẽ 36px | chụp màn hình: không còn khung Windows |
 | 3 nút cửa sổ | thu nhỏ / phóng / đóng, 46×32, hover đỏ ở nút đóng | bấm được, icon đổi khi maximize |
 | Kéo cửa sổ | `WM_NCLBUTTONDOWN` + `HTCAPTION` để Windows tự lo, kể cả snap | kéo được, double-click maximize |
-| Trình duyệt tệp mặc định | `HKCU\Software\Classes\FilesRS.Folder` + `RegisteredApplications` | đăng ký được, gỡ sạch bằng `unregister` |
+| Trình duyệt tệp mặc định | Nút ⭐ trên status bar → hộp thoại xác nhận → `HKCU\Software\Classes\FilesRS.Folder` + `RegisteredApplications` → mở `ms-settings:defaultapps` | có hộp thoại xác nhận trước khi đổi; gỡ sạch bằng `unregister` |
 
 **Về quyền administrator:** manifest dùng `highestAvailable` chứ không phải
 `requireAdministrator`. Tài khoản thuộc nhóm Administrators sẽ được nâng quyền;
