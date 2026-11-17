@@ -265,6 +265,14 @@ fn apply_listing(ui: &AppWindow, app: &Rc<RefCell<App>>, listing: files_core::Li
     ui.set_busy(false);
     push_view(ui, app);
     push_status(ui, app);
+
+    // Tính kích thước mọi thư mục con ở luồng riêng: người dùng thấy "—" rồi
+    // từng ô tự điền, thay vì phải bấm "Tính kích thước" cho từng cái.
+    queue_folder_sizes(app);
+    // Icon thật của Windows cho exe/msi/lnk… — chạy sau khi bảng đã hiện để
+    // không làm chậm lần vẽ đầu.
+    queue_shell_icons(app);
+
     // Bảng thuộc tính của mục đầu tiên: bỏ trống thì panel trông như hỏng.
     let first = {
         let s = app.borrow();
@@ -302,6 +310,10 @@ fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 kind: SharedString::from(format::kind_label(e).as_str()),
                 icon: SharedString::from(icon),
                 glyph: color_from_u32(glyph),
+                // Icon thật của Windows cho loại tệp có (exe, msi, lnk…).
+                // Ảnh được nạp ở luồng nền rồi điền vào sau.
+                icon_image: slint::Image::default(),
+                has_icon_image: false,
                 index: visible_index as i32,
             })
         })
@@ -372,6 +384,132 @@ fn grid_columns(width: f32) -> usize {
     }
     let cols = ((width + GAP) / (TILE + GAP)).floor() as usize;
     cols.max(MIN)
+}
+
+/// Convert a decoded RGBA icon into a Slint image.
+fn to_slint_image(icon: &files_fs::RgbaIcon) -> slint::Image {
+    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+        &icon.pixels,
+        icon.width,
+        icon.height,
+    );
+    slint::Image::from_rgba8(buffer)
+}
+
+/// Write a shell icon into the row for `path`, in both views.
+fn apply_shell_icon(ui: &AppWindow, app: &Rc<RefCell<App>>, path: &Path, image: slint::Image) {
+    let a = app.borrow();
+    let tab = a.tab();
+    let path_str = path.to_string_lossy();
+    let Some(visible_index) = tab
+        .visible
+        .iter()
+        .position(|i| tab.entries.get(*i).map(|e| e.path.as_str()) == Some(path_str.as_ref()))
+    else {
+        return;
+    };
+
+    let rows = ui.get_rows();
+    if let Some(mut row) = rows.row_data(visible_index) {
+        row.icon_image = image.clone();
+        row.has_icon_image = true;
+        rows.set_row_data(visible_index, row);
+    }
+
+    let per_row = grid_columns(a.grid_width);
+    let grid = ui.get_grid_rows();
+    if let Some(line) = grid.row_data(visible_index / per_row) {
+        if let Some(inner) = line.as_any().downcast_ref::<VecModel<FileRow>>() {
+            let col = visible_index % per_row;
+            if let Some(mut tile) = inner.row_data(col) {
+                tile.icon_image = image;
+                tile.has_icon_image = true;
+                inner.set_row_data(col, tile);
+            }
+        }
+    }
+}
+
+/// Ask the worker for real Windows icons for the rows that have one.
+///
+/// Only formats where a publisher icon exists are requested; see
+/// `files_fs::wants_shell_icon`.
+fn queue_shell_icons(app: &Rc<RefCell<App>>) {
+    let (paths, token) = {
+        let s = app.borrow();
+        let tab = s.tab();
+        let paths: Vec<PathBuf> = tab
+            .entries
+            .iter()
+            .filter(|e| files_fs::wants_shell_icon(Path::new(&e.path)))
+            .map(|e| PathBuf::from(&e.path))
+            .collect();
+        (paths, s.load_token)
+    };
+    let worker = &app.borrow().worker;
+    for path in paths {
+        worker.submit(Job::ShellIcon { path, size: 20, token });
+    }
+}
+
+/// Queue a size walk for every visible folder, tagged with the current token.
+/// The token is the one from the listing that produced these rows: a reply that
+/// arrives after the user navigated away is dropped instead of writing a stale
+/// size into a different folder's row.
+fn queue_folder_sizes(app: &Rc<RefCell<App>>) {
+    let (paths, token) = {
+        let s = app.borrow();
+        let tab = s.tab();
+        let paths: Vec<PathBuf> = tab
+            .entries
+            .iter()
+            .filter(|e| e.is_dir())
+            .map(|e| PathBuf::from(&e.path))
+            .collect();
+        (paths, s.load_token)
+    };
+    let worker = &app.borrow().worker;
+    for path in paths {
+        worker.submit_size(path, token);
+    }
+}
+
+/// Write one folder's size into its row without rebuilding the list.
+///
+/// A full `push_view` would reset every row's `TouchArea` mid-scroll; updating
+/// the single cell keeps hover, selection and scroll position intact.
+fn fill_size_cell(ui: &AppWindow, app: &Rc<RefCell<App>>, path: &Path, bytes: u64) {
+    let a = app.borrow();
+    let tab = a.tab();
+    let path_str = path.to_string_lossy();
+    let Some(visible_index) = tab
+        .visible
+        .iter()
+        .position(|i| tab.entries.get(*i).map(|e| e.path.as_str()) == Some(path_str.as_ref()))
+    else {
+        return;
+    };
+
+    let text = SharedString::from(format::format_size(Some(bytes)).as_str());
+    let rows = ui.get_rows();
+    if let Some(mut row) = rows.row_data(visible_index) {
+        row.size = text.clone();
+        rows.set_row_data(visible_index, row);
+    }
+
+    // Grid view shares the same entries; keep it in sync too.
+    let per_row = grid_columns(a.grid_width);
+    let grid = ui.get_grid_rows();
+    let grid_row = visible_index / per_row;
+    let grid_col = visible_index % per_row;
+    if let Some(line) = grid.row_data(grid_row) {
+        if let Some(inner) = line.as_any().downcast_ref::<VecModel<FileRow>>() {
+            if let Some(mut tile) = inner.row_data(grid_col) {
+                tile.size = text;
+                inner.set_row_data(grid_col, tile);
+            }
+        }
+    }
 }
 
 fn push_status(ui: &AppWindow, app: &Rc<RefCell<App>>) {
@@ -1687,26 +1825,46 @@ fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                         }
                     }
                 }
-                Ok(JobDone::FolderSize { path, bytes }) => {
-                    ui.set_busy(false);
-                    ui.set_busy_text(SharedString::default());
-                    // Fill the size cell in place: the row keeps its position and
-                    // only the value changes.
-                    {
+                Ok(JobDone::FolderSize { path, bytes, token }) => {
+                    // Token 0 là lệnh thủ công từ menu; token khác phải khớp
+                    // lần đọc thư mục hiện tại, nếu không kết quả thuộc về
+                    // một thư mục người dùng đã rời đi.
+                    if token != 0 && token != a.borrow().load_token {
+                        continue;
+                    }
+                    let updated = {
                         let mut s = a.borrow_mut();
                         let active = s.active;
-                        if let Some(e) = s.tabs[active]
+                        let path_str = path.to_string_lossy().into_owned();
+                        match s.tabs[active]
                             .entries
                             .iter_mut()
-                            .find(|e| e.path == path.to_string_lossy())
+                            .find(|e| e.path == path_str)
                         {
-                            e.size = Some(bytes);
+                            Some(e) => {
+                                e.size = Some(bytes);
+                                true
+                            }
+                            None => false,
                         }
+                    };
+                    if updated {
+                        // Điền đúng ô đó, không dựng lại cả bảng.
+                        fill_size_cell(&ui, &a, &path, bytes);
                     }
-                    push_view(&ui, &a);
-                    ui.set_status_tertiary(SharedString::from(
-                        format!("Kích thước thư mục: {}", format::format_size(Some(bytes))).as_str(),
-                    ));
+                    if token != 0 {
+                        ui.set_status_tertiary(SharedString::from(
+                            format!("Kích thước thư mục: {}", format::format_size(Some(bytes))).as_str(),
+                        ));
+                    }
+                }
+                Ok(JobDone::ShellIcon { path, icon, token }) => {
+                    // Bỏ qua nếu người dùng đã rời thư mục.
+                    if token != a.borrow().load_token {
+                        continue;
+                    }
+                    let image = to_slint_image(&icon);
+                    apply_shell_icon(&ui, &a, &path, image);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => break,

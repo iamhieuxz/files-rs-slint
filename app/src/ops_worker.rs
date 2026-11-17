@@ -70,6 +70,12 @@ pub enum Job {
     DeletePermanent {
         paths: Vec<PathBuf>,
     },
+    /// Read the Windows shell icon for one file.
+    ShellIcon {
+        path: PathBuf,
+        size: u32,
+        token: u64,
+    },
 }
 
 /// Result of a job.
@@ -86,14 +92,33 @@ pub enum JobDone {
         result: Result<(), FsError>,
     },
     /// A folder's total size, so the UI can fill the size column in place.
+    /// `token` identifies the directory listing that asked for it.
     FolderSize {
         path: PathBuf,
         bytes: u64,
+        token: u64,
+    },
+    /// A decoded Windows shell icon, ready for Slint.
+    ShellIcon {
+        path: PathBuf,
+        icon: files_fs::RgbaIcon,
+        token: u64,
     },
 }
 
 pub struct Worker {
     tx: Sender<Job>,
+    /// Folder sizes run on their own thread so a slow tree cannot delay a copy,
+    /// a delete, or the next navigation. Each job carries the directory token it
+    /// belongs to; the UI drops replies whose token is stale.
+    size_tx: Sender<SizeJob>,
+}
+
+/// A folder-size request, separate from `Job` because it is cancellable by
+/// staleness rather than by finishing.
+pub struct SizeJob {
+    pub path: PathBuf,
+    pub token: u64,
 }
 
 impl Worker {
@@ -101,6 +126,7 @@ impl Worker {
     pub fn spawn() -> (Self, Receiver<JobDone>) {
         let (job_tx, job_rx) = channel::<Job>();
         let (done_tx, done_rx) = channel::<JobDone>();
+        let main_done = done_tx.clone();
 
         thread::Builder::new()
             .name("files-worker".into())
@@ -108,20 +134,46 @@ impl Worker {
                 while let Ok(job) = job_rx.recv() {
                     let done = run(job);
                     // A closed channel means the UI is shutting down; stop.
-                    if done_tx.send(done).is_err() {
+                    if main_done.send(done).is_err() {
                         break;
                     }
                 }
             })
             .expect("spawn worker thread");
 
-        (Self { tx: job_tx }, done_rx)
+        // Second thread, same result channel: sizes and operations are
+        // independent, and one slow folder must not stall the other.
+        let (size_tx, size_rx) = channel::<SizeJob>();
+        let size_done = done_tx.clone();
+        thread::Builder::new()
+            .name("files-size".into())
+            .spawn(move || {
+                while let Ok(job) = size_rx.recv() {
+                    let bytes = files_fs::directory_size(&job.path);
+                    let done = JobDone::FolderSize {
+                        path: job.path,
+                        bytes,
+                        token: job.token,
+                    };
+                    if size_done.send(done).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn size thread");
+
+        (Self { tx: job_tx, size_tx }, done_rx)
     }
 
     pub fn submit(&self, job: Job) {
         // A closed channel means the worker exited; the UI stays alive and the
         // user can retry, so dropping the job is the least-bad option.
         let _ = self.tx.send(job);
+    }
+
+    /// Queue a folder-size walk. Replies are tagged with `token`.
+    pub fn submit_size(&self, path: PathBuf, token: u64) {
+        let _ = self.size_tx.send(SizeJob { path, token });
     }
 }
 
@@ -211,8 +263,10 @@ fn run(job: Job) -> JobDone {
             JobDone::OpDone { label, result }
         }
         Job::FolderSize { path } => {
+            // Explicit "tính kích thước" from the menu; token 0 never matches a
+            // live listing, so the reply is applied by the manual path only.
             let bytes = files_fs::directory_size(&path);
-            JobDone::FolderSize { path, bytes }
+            JobDone::FolderSize { path, bytes, token: 0 }
         }
         Job::DeletePermanent { paths } => {
             let n = paths.len();
@@ -224,6 +278,16 @@ fn run(job: Job) -> JobDone {
                 Err(e) => JobDone::OpDone {
                     label: format!("Xoá vĩnh viễn lỗi: {}", e.message),
                     result: Err(e),
+                },
+            }
+        }
+        Job::ShellIcon { path, size, token } => {
+            match files_fs::shell_icon(&path, size) {
+                Ok(Some(icon)) => JobDone::ShellIcon { path, icon, token },
+                // No icon is not an error: the row keeps its Fluent glyph.
+                Ok(None) | Err(_) => JobDone::OpDone {
+                    label: String::new(),
+                    result: Ok(()),
                 },
             }
         }

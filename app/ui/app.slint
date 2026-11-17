@@ -26,6 +26,9 @@ export struct FileRow {
     kind: string,
     icon: string,
     glyph: color,
+    // Icon thật của Windows (exe, msi, lnk…). Rỗng thì dùng `icon` + `glyph`.
+    icon-image: image,
+    has-icon-image: bool,
     // Vị trí trong danh sách đang hiển thị; cần cho grid vì ở đó mỗi ô
     // không còn chỉ số dòng như trong vòng lặp or row[i].
     index: int,
@@ -663,22 +666,34 @@ export component AppWindow inherits Window {
                                         HorizontalLayout {
                                             width: Theme.col-name;
                                             spacing: Theme.icon-gap;
-                                            FluentIcon {
-                                                name: row.icon;
-                                                width: Theme.icon-size;
-                                                height: Theme.icon-size;
-                                                y: (parent.height - self.height) / 2;
-                                                tint: row.glyph;
-                                            }
-                                            Text {
+                                            HorizontalLayout {
+                                                // Icon: ảnh thật của Windows nếu có, ngược lại glyph Fluent.
+                                                if row.has-icon-image: Image {
+                                                    source: row.icon-image;
+                                                    width: Theme.icon-size;
+                                                    height: Theme.icon-size;
+                                                    image-fit: contain;
+                                                    y: (parent.height - self.height) / 2;
+                                                }
+                                                if !row.has-icon-image: FluentIcon {
+                                                    name: row.icon;
+                                                    width: Theme.icon-size;
+                                                    height: Theme.icon-size;
+                                                    y: (parent.height - self.height) / 2;
+                                                    tint: row.glyph;
+                                                }
+                                                Text {
                                                 // width cố định + elide: tên dài bị cắt,
                                                 // không đẩy các cột sau.
-                                                width: parent.width - Theme.icon-size - Theme.icon-gap;
+                                                // Trừ thẳng từ token cột, không hỏi parent.width:
+                                                // hỏi parent trong layout sẽ tạo binding loop.
+                                                width: Theme.col-name - Theme.icon-size - Theme.icon-gap;
                                                 text: row.name;
                                                 color: row.is-hidden ? Theme.text-tertiary : Theme.text-primary;
                                                 font-size: Theme.font-body;
                                                 vertical-alignment: center;
-                                                overflow: elide;
+                                                    overflow: elide;
+                                                }
                                             }
                                         }
                                         Text {

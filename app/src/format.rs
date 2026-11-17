@@ -9,28 +9,53 @@ use files_core::{Entry, EntryKind};
 /// Fluent icon name + tint for one entry.
 ///
 /// The colour groups match Files' `ThemedIcon` conventions: folders amber,
-/// documents blue, code purple, media orange, archives pink.
+/// documents blue, code purple, media orange, archives pink. Executables and
+/// installers get their own group so an app is recognisable at a glance.
 pub fn icon_for(entry: &Entry) -> (&'static str, u32) {
     if entry.is_dir() {
         return ("folder", 0xd8a838);
     }
     let ext = entry.extension.as_deref().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" | "tif" | "tiff" => {
-            ("image", 0x34a853)
+        // ---- ảnh ----
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" | "tif" | "tiff"
+        | "heic" | "avif" | "raw" | "psd" => ("image", 0x34a853),
+        // ---- video ----
+        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "webm" | "flv" | "m4v" | "mpg" | "mpeg" => {
+            ("video", 0xfb923c)
         }
-        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "webm" | "flv" => ("video", 0xfb923c),
-        "mp3" | "wav" | "flac" | "m4a" | "ogg" | "aac" => ("music_note", 0xd9534f),
-        "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "iso" => ("folder_zip", 0xf472b6),
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "c" | "cpp" | "h" | "cs" | "go" | "java"
-        | "json" | "toml" | "yaml" | "yml" | "xml" | "html" | "css" | "sql" | "sh" | "ps1"
-        | "bat" => ("code", 0xc084fc),
-        "doc" | "docx" | "rtf" | "odt" => ("document", 0x4a90d9),
-        "xls" | "xlsx" | "csv" | "ods" => ("table", 0x2aa36b),
-        "ppt" | "pptx" | "odp" => ("slide_layout", 0xe0703d),
+        // ---- âm thanh ----
+        "mp3" | "wav" | "flac" | "m4a" | "ogg" | "aac" | "wma" | "opus" => {
+            ("music_note", 0xd9534f)
+        }
+        // ---- nén ----
+        "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "cab" => {
+            ("folder_zip", 0xf472b6)
+        }
+        // ---- mã nguồn ----
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "c" | "cpp" | "h" | "hpp" | "cs" | "go"
+        | "java" | "kt" | "rb" | "php" | "swift" | "lua" | "json" | "toml" | "yaml" | "yml"
+        | "xml" | "html" | "css" | "scss" | "sql" | "sh" | "ps1" | "bat" | "cmd" => {
+            ("code", 0xc084fc)
+        }
+        // ---- tài liệu ----
+        "doc" | "docx" | "rtf" | "odt" | "pages" => ("document", 0x4a90d9),
+        "xls" | "xlsx" | "csv" | "ods" | "numbers" => ("table", 0x2aa36b),
+        "ppt" | "pptx" | "odp" | "key" => ("slide_layout", 0xe0703d),
         "pdf" => ("document", 0xd9534f),
         "txt" | "md" | "log" => ("document", 0x8a8f98),
-        "exe" | "msi" | "dll" => ("window", 0x8a8f98),
+        // ---- ứng dụng và trình cài đặt ----
+        // Một tệp .exe là một ứng dụng: dùng icon "apps" thay vì icon tệp chung,
+        // để hàng trăm tệp trong Program Files không trông giống nhau.
+        "exe" | "com" | "appx" | "msix" => ("apps", 0x2f86d4),
+        "msi" | "msp" => ("box", 0x8b6bd9),
+        "dll" | "sys" | "drv" => ("puzzle_piece", 0x8a8f98),
+        "lnk" | "url" => ("link", 0x4a90d9),
+        // ---- dữ liệu và cấu hình ----
+        "db" | "sqlite" | "sqlite3" | "mdb" | "accdb" => ("database", 0x2aa36b),
+        "ini" | "cfg" | "conf" | "reg" => ("settings", 0x8a8f98),
+        "ttf" | "otf" | "woff" | "woff2" => ("text_bullet_list", 0x8b6bd9),
+        "iso" | "vhd" | "vhdx" | "img" => ("hard_drive", 0x6b7280),
         _ => ("document", 0x8a8f98),
     }
 }
@@ -173,6 +198,37 @@ mod tests {
         assert_eq!(icon_for(&file("a.rs", Some("rs"))).0, "code");
         assert_eq!(icon_for(&file("a.zip", Some("zip"))).0, "folder_zip");
         assert_eq!(icon_for(&file("a.unknownext", Some("unknownext"))).0, "document");
+    }
+
+    #[test]
+    fn applications_are_distinguishable_from_plain_files() {
+        // An .exe is an app, not an anonymous document: Program Files is full
+        // of them and they must not all look identical.
+        assert_eq!(icon_for(&file("app.exe", Some("exe"))).0, "apps");
+        assert_eq!(icon_for(&file("setup.msi", Some("msi"))).0, "box");
+        assert_eq!(icon_for(&file("lib.dll", Some("dll"))).0, "puzzle_piece");
+        assert_eq!(icon_for(&file("shortcut.lnk", Some("lnk"))).0, "link");
+        // And they are visually distinct from each other.
+        assert_ne!(
+            icon_for(&file("app.exe", Some("exe"))).0,
+            icon_for(&file("setup.msi", Some("msi"))).0
+        );
+    }
+
+    #[test]
+    fn modern_media_and_office_extensions_are_covered() {
+        assert_eq!(icon_for(&file("a.heic", Some("heic"))).0, "image");
+        assert_eq!(icon_for(&file("a.mkv", Some("mkv"))).0, "video");
+        assert_eq!(icon_for(&file("a.flac", Some("flac"))).0, "music_note");
+        assert_eq!(icon_for(&file("a.docx", Some("docx"))).0, "document");
+        assert_eq!(icon_for(&file("a.pptx", Some("pptx"))).0, "slide_layout");
+        assert_eq!(icon_for(&file("a.sqlite", Some("sqlite"))).0, "database");
+    }
+
+    #[test]
+    fn extension_matching_is_case_insensitive() {
+        assert_eq!(icon_for(&file("PHOTO.JPG", Some("JPG"))).0, "image");
+        assert_eq!(icon_for(&file("APP.EXE", Some("EXE"))).0, "apps");
     }
 
     #[test]

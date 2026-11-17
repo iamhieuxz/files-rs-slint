@@ -78,6 +78,23 @@ Header và hàng dữ liệu cùng đọc các token này, nên một cái tên 
 | Mở Terminal | Windows Terminal `-d`, dự phòng `cmd /K cd` |
 | Ẩn/hiện phần mở rộng | `display_name`, không làm rỗng tên `.gitignore` |
 | Thư mục trước tệp | bật/tắt `folders_first`, sắp xếp lại tại chỗ |
+| Kích thước thư mục tự động | luồng riêng `files-size`, token chống kết quả cũ, điền từng ô |
+| Icon thật của Windows | `SHGetFileInfoW` + `GetDIBits`, cho exe/msi/lnk/pdf/văn phòng |
+
+## Icon
+
+Hai tầng:
+
+1. **Glyph Fluent** (143 icon) cho mọi loại tệp — nhẹ, vẽ tức thì.
+2. **Icon thật của Windows** cho những định dạng thực sự có icon nhà phát hành:
+   `exe`, `msi`, `lnk`, `pdf`, `docx`, `xlsx`, `pptx`, `zip`, media, ảnh.
+
+Tầng 2 chạy ở luồng nền sau khi bảng đã hiện, nên cửa sổ không chờ. Chỉ những
+đuôi này được hỏi Shell — một thư mục 5000 tệp `.txt` sẽ không giải mã 5000
+bitmap. Test kiểm tra trên `notepad.exe` và `cmd.exe` thật: icon phải có pixel
+nhìn thấy được, không phải một màu phẳng, và hai tệp khác nhau phải cho hai
+bitmap khác nhau.
+
 
 ## Đối chiếu với Files gốc
 

@@ -75,15 +75,17 @@ export global Theme {
     out property <length> r-md: 7px;
     out property <length> r-lg: 8px;
 
-    // ---- Kích thước chrome (cố định, không co giãn theo nội dung) ----
-    out property <length> tab-height: 36px;
-    out property <length> commandbar-height: 44px;
-    out property <length> addressbar-height: 36px;
+    // ---- Kích thước chrome ----
+    // Số lấy từ Files gốc: NavigationToolbar Height=48, row height mặc định 36,
+    // icon 20px (LayoutSizeKindHelper). Giữ đúng để bố cục khớp bản gốc.
+    out property <length> tab-height: 40px;
+    out property <length> commandbar-height: 48px;
+    out property <length> addressbar-height: 34px;
     out property <length> header-height: 32px;
-    out property <length> row-height: 32px;
+    out property <length> row-height: 36px;
     out property <length> grid-tile: 132px;
     out property <length> status-height: 28px;
-    out property <length> sidebar-width: 232px;
+    out property <length> sidebar-width: 240px;
     out property <length> sidebar-collapsed: 0px;
     out property <length> preview-width: 300px;
     out property <length> control-height: 32px;
@@ -92,14 +94,14 @@ export global Theme {
     // Bề rộng CỐ ĐỊNH cho từng cột. Header và hàng dữ liệu cùng đọc các giá trị
     // này, nên cột không thể lệch nhau và một cái tên dài không thể đẩy cột.
     out property <length> list-pad: 12px;        // lề trong của cả header và hàng
-    out property <length> icon-size: 16px;       // icon loại tệp ở cột đầu
+    out property <length> icon-size: 20px;       // icon loại tệp ở cột đầu
     out property <length> icon-gap: 8px;         // icon → chữ
     out property <length> col-name: 280px;       // tên: quá dài thì elide
     out property <length> col-modified: 150px;   // ngày sửa
     out property <length> col-kind: 120px;       // loại
     out property <length> col-size: 110px;       // kích thước (căn phải)
     // Header "Tên" thụt vào đúng chỗ chữ của tên tệp: bỏ qua icon + khoảng cách.
-    out property <length> name-text-indent: 24px;
+    out property <length> name-text-indent: 28px;
 
     // ---- Chữ ----
     out property <length> font-caption: 12px;
