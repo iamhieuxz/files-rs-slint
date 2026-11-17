@@ -1400,6 +1400,8 @@ dependencies = [
  "files-fs",
  "open",
  "raw-window-handle",
+ "serde",
+ "serde_json",
  "slint",
  "slint-build",
  "windows 0.62.2",

@@ -156,6 +156,31 @@ Start, format drive, recycle bin browser, rotate ảnh, set wallpaper.
 | **× và menu đóng tab lệch hành vi** | Hai đường xử lý riêng biệt | Gộp về `close_tab_at`; phép toán chỉ số tách thành `close_index_result` với 7 test |
 | **Vùng bấm tab chồng nhau** | Hai TouchArea chồng lên nhau (nút × và cả tab) | Một TouchArea phủ toàn tab, tự xác định vùng × theo `mouse-x` |
 
+## Thẻ màu (Tags)
+
+Lấy đúng bảng màu của Files (`FileTagsSettingsService.cs`):
+
+| Thẻ | Màu |
+|---|---|
+| Home | `#0072BD` xanh dương |
+| Work | `#D95319` cam |
+| Photos | `#EDB120` vàng |
+| Important | `#77AC30` xanh lá |
+
+Cách dùng: chuột phải lên tệp hoặc thư mục → **Thẻ màu** → chọn thẻ. Icon đổi
+sang màu của thẻ, nên một thư mục được gắn thẻ đọc ra ngay là "cái màu xanh".
+Bấm lại đúng thẻ đó để bỏ. "Bỏ thẻ" xoá toàn bộ thẻ của mục.
+
+Thẻ cũng nằm trong Command Palette (`Thẻ: Home`, `Thẻ: Work`…) để tìm bằng phím.
+
+Lưu trữ: một tệp JSON gồm định nghĩa thẻ và bản đồ `đường dẫn → uid`.
+Vị trí ưu tiên `%LOCALAPPDATA%\FilesRS\tags.json`; nếu profile bị chặn ghi thì
+lùi về `files-rs-tags.json` cạnh file exe, giống cách logger làm.
+
+Đường dẫn là danh tính (giống Files), nên đổi tên tệp sẽ mất thẻ. Khi mở một
+thư mục, thẻ của những mục đã biến mất trong thư mục đó được dọn đi để tệp cấu
+hình không phình ra và đường dẫn bị dùng lại không thừa hưởng màu cũ.
+
 ## Ghi log
 
 App không có console nên `stderr` mất hút. Mọi sự kiện chẩn đoán ghi vào tệp,

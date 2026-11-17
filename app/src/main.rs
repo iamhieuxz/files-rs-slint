@@ -9,6 +9,7 @@ mod history;
 mod logging;
 mod ops_worker;
 mod preview;
+mod tags;
 mod window;
 
 use files_core::sort::ListOptions;
@@ -118,6 +119,9 @@ struct App {
     show_extensions: bool,
     /// Group folders above files, or sort them together.
     folders_first: bool,
+    /// Thẻ màu của tệp và thư mục, cùng nơi lưu để ghi lại khi thay đổi.
+    tags: tags::TagStore,
+    tag_path: PathBuf,
 }
 
 impl App {
@@ -168,6 +172,11 @@ fn main() -> Result<(), slint::PlatformError> {
         closed_tabs: Vec::new(),
         show_extensions: true,
         folders_first: true,
+        tags: {
+            let path = tag_store_path();
+            tags::TagStore::load(&path)
+        },
+        tag_path: tag_store_path(),
     }));
 
     build_sidebar(&ui);
@@ -185,6 +194,31 @@ fn main() -> Result<(), slint::PlatformError> {
     window::install_state_poller(&ui);
 
     ui.run()
+}
+
+/// Where the tag database lives.
+///
+/// `%LOCALAPPDATA%` is the right home, but a confined profile can refuse writes;
+/// in that case the store sits beside the executable, the same fallback the
+/// logger uses, so tagging still works instead of silently doing nothing.
+fn tag_store_path() -> PathBuf {
+    let preferred = tags::TagStore::default_path();
+    if let Some(dir) = preferred.parent() {
+        if std::fs::create_dir_all(dir).is_ok()
+            && std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&preferred)
+                .is_ok()
+        {
+            return preferred;
+        }
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .map(|d| d.join("files-rs-tags.json"))
+        .unwrap_or(preferred)
 }
 
 // ---------------------------------------------------------------- sidebar
@@ -279,6 +313,22 @@ fn apply_listing(ui: &AppWindow, app: &Rc<RefCell<App>>, listing: files_core::Li
         retarget_watch(&mut a, &path);
         a.tabs[active].hidden_count = listing.hidden_count;
     }
+    // Dọn thẻ của những mục đã biến mất trong thư mục này, để tệp cấu hình
+    // không phình ra và đường dẫn bị tái sử dụng không thừa hưởng màu cũ.
+    {
+        let mut a = app.borrow_mut();
+        let current = a.tab().current().to_path_buf();
+        let before = a.tags.assignments.len();
+        a.tags.prune_missing(&current);
+        if a.tags.assignments.len() != before {
+            let path = a.tag_path.clone();
+            let store = a.tags.clone();
+            drop(a);
+            if let Err(e) = store.save(&path) {
+                logging::write(&format!("không lưu được thẻ sau khi dọn: {e}"));
+            }
+        }
+    }
     ui.set_error_text(SharedString::default());
     ui.set_busy(false);
     push_view(ui, app);
@@ -316,7 +366,13 @@ fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         .enumerate()
         .filter_map(|(visible_index, entry_index)| {
             let e = tab.entries.get(*entry_index)?;
-            let (icon, glyph) = format::icon_for(e);
+            let (icon, default_glyph) = format::icon_for(e);
+            // Có thẻ thì icon mang màu của thẻ: đây chính là "đổi màu" mà người
+            // dùng thấy, với cả tệp lẫn thư mục.
+            let glyph = a
+                .tags
+                .color_for(Path::new(&e.path))
+                .unwrap_or(default_glyph);
             Some(FileRow {
                 name: SharedString::from(format::display_name(&e.name, e.is_dir(), a.show_extensions).as_str()),
                 path: SharedString::from(e.path.as_str()),
@@ -921,6 +977,19 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                     None => (false, false),
                 }
             };
+            // Thẻ hiện có của mục đang chọn, để menu hiện dấu ✓ và bật/tắt
+            // mục "Bỏ thẻ" cho đúng.
+            let (tag_list, attached) = {
+                let s = a.borrow();
+                let mut attached = [false; 4];
+                if let Some(first) = s.tab().selected_entries().first() {
+                    let owned = s.tags.tags_for(Path::new(&first.path));
+                    for (slot, tag) in s.tags.tags.iter().take(4).enumerate() {
+                        attached[slot] = owned.iter().any(|t| t.uid == tag.uid);
+                    }
+                }
+                (s.tags.tags.clone(), attached)
+            };
             let items = vec![
                 menu("open", "Mở", "open", "Enter", i >= 0, false),
                 menu("open-new-tab", "Mở trong tab mới", "window", "", i >= 0, false),
@@ -932,6 +1001,14 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 menu("delete-permanent", "Xoá vĩnh viễn", "delete", "Shift+Del", i >= 0, false),
                 menu("", "", "", "", false, true),
                 menu("copy-path", "Sao chép đường dẫn", "link", "Ctrl+Shift+C", i >= 0, false),
+                menu("", "", "", "", false, true),
+                // Thẻ màu: đổi màu icon của tệp hoặc thư mục.
+                menu("", "Thẻ màu", "", "", i >= 0, false),
+                menu_tag(&tag_list[0], i >= 0 && attached[0]),
+                menu_tag(&tag_list[1], i >= 0 && attached[1]),
+                menu_tag(&tag_list[2], i >= 0 && attached[2]),
+                menu_tag(&tag_list[3], i >= 0 && attached[3]),
+                menu("tag-clear", "Bỏ thẻ", "dismiss", "", i >= 0 && attached.iter().any(|x| *x), false),
                 menu("", "", "", "", false, true),
                 menu("compress", "Nén thành ZIP", "folder_zip", "", i >= 0, false),
                 menu("extract", "Giải nén", "folder_open", "", is_archive, false),
@@ -1038,6 +1115,8 @@ fn menu(
     MenuItem {
         id: SharedString::from(id),
         label: SharedString::from(label),
+        dot: slint::Color::from_argb_u8(0, 0, 0, 0),
+        has_dot: false,
         icon: SharedString::from(icon),
         shortcut: SharedString::from(shortcut),
         enabled,
@@ -1199,7 +1278,13 @@ fn update_selection_flags(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 }
 
 fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
+    // Mục thẻ mang uid trong mã lệnh, nên phải bắt trước khi so khớp chuỗi.
+    if let Some(uid) = id.strip_prefix("tag-set:") {
+        set_tag_on_selection(ui, app, Some(uid));
+        return;
+    }
     match id {
+        "tag-clear" => set_tag_on_selection(ui, app, None),
         "refresh" => reload(ui, app),
         "copy" => set_clipboard(ui, app, false),
         "cut" => set_clipboard(ui, app, true),
@@ -1392,6 +1477,11 @@ pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "refresh", label: "Làm mới", icon: "arrow_clockwise", shortcut: "F5" },
     PaletteCommand { id: "go-up", label: "Lên một cấp", icon: "arrow_upload", shortcut: "Backspace" },
     PaletteCommand { id: "toggle-theme", label: "Đổi sáng/tối", icon: "weather_moon", shortcut: "" },
+    PaletteCommand { id: "tag-set:f7e0e137-2eb5-4fa4-a50d-ddd65df17c34", label: "Thẻ: Home (xanh dương)", icon: "tag", shortcut: "" },
+    PaletteCommand { id: "tag-set:c84a8131-c4de-47d9-9440-26e859d14b3d", label: "Thẻ: Work (cam)", icon: "tag", shortcut: "" },
+    PaletteCommand { id: "tag-set:d4b8d4bd-ceaf-4e58-ac61-a185fcf96c5d", label: "Thẻ: Photos (vàng)", icon: "tag", shortcut: "" },
+    PaletteCommand { id: "tag-set:79376daf-c44a-4fe4-aa3b-8b30baea453e", label: "Thẻ: Important (xanh lá)", icon: "tag", shortcut: "" },
+    PaletteCommand { id: "tag-clear", label: "Bỏ thẻ màu", icon: "dismiss", shortcut: "" },
     PaletteCommand { id: "register-assoc", label: "Đặt làm trình duyệt tệp mặc định", icon: "link", shortcut: "" },
     PaletteCommand { id: "open-default-apps", label: "Mở Settings ứng dụng mặc định", icon: "settings", shortcut: "" },
 ];
@@ -1526,6 +1616,84 @@ fn duplicate_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
+}
+
+/// Apply `uid` to every selected item, or clear all tags when `None`.
+///
+/// Tags are stored per path and saved immediately: a crash or a kill must not
+/// lose the colour the user just chose.
+fn set_tag_on_selection(ui: &AppWindow, app: &Rc<RefCell<App>>, uid: Option<&str>) {
+    let paths = app.borrow().tab().selected_paths();
+    if paths.is_empty() {
+        return;
+    }
+    let mut failed_save = None;
+    let (name, changed) = {
+        let mut s = app.borrow_mut();
+        let base = uid
+            .and_then(|u| s.tags.tag(u).map(|t| t.name.clone()))
+            .unwrap_or_else(|| "Bỏ thẻ".to_string());
+        let name = base;
+        // Bấm lại một thẻ đã gắn thì gỡ nó ra: đó là cách tự nhiên nhất để
+        // tắt màu mà không phải nhớ "Bỏ thẻ".
+        let all_tagged = uid.is_some_and(|u| {
+            paths
+                .iter()
+                .all(|p| s.tags.tags_for(p).iter().any(|t| t.uid == u))
+        });
+        for path in &paths {
+            match uid {
+                Some(u) if all_tagged => s.tags.detach(path, u),
+                Some(u) => s.tags.attach(path, u),
+                None => s.tags.clear(path),
+            }
+        }
+        let path = s.tag_path.clone();
+        let store = s.tags.clone();
+        drop(s);
+        if let Err(e) = store.save(&path) {
+            failed_save = Some(e);
+        }
+        (name, paths.len())
+    };
+
+    if let Some(e) = failed_save {
+        logging::write(&format!("không lưu được thẻ: {e}"));
+        let text = format!("Không lưu được thẻ: {e}");
+        ui.set_error_text(SharedString::from(text.as_str()));
+    } else {
+        ui.set_status_tertiary(SharedString::from(
+            format!("{name}: {changed} mục").as_str(),
+        ));
+    }
+    // Vẽ lại để icon đổi màu ngay.
+    push_view(ui, app);
+}
+
+/// A menu row carrying a colour swatch, used for the tag list.
+fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
+    // Mã lệnh mang uid để bấm vào là biết gắn thẻ nào.
+    let id = format!("tag-set:{}", tag.uid);
+    MenuItem {
+        id: SharedString::from(id.as_str()),
+        // Dấu ✓ cho thẻ đã gắn, để bấm lần nữa là biết trạng thái hiện tại.
+        label: SharedString::from(if attached {
+            format!("{}  ✓", tag.name)
+        } else {
+            tag.name.clone()
+        }),
+        icon: SharedString::default(),
+        shortcut: SharedString::default(),
+        enabled: true,
+        separator: false,
+        dot: slint::Color::from_argb_u8(
+            255,
+            (tags::parse_hex(&tag.color).unwrap_or(0x808080) >> 16) as u8,
+            ((tags::parse_hex(&tag.color).unwrap_or(0x808080) >> 8) & 0xFF) as u8,
+            (tags::parse_hex(&tag.color).unwrap_or(0x808080) & 0xFF) as u8,
+        ),
+        has_dot: true,
+    }
 }
 
 /// Tab the context menu points at, if it is still a valid index.

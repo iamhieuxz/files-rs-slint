@@ -413,6 +413,10 @@ export struct MenuItem {
     shortcut: string,
     enabled: bool,
     separator: bool,
+    // Chấm màu trước nhãn. Dùng cho mục thẻ; `has-dot` false thì không vẽ,
+    // vì Slint không cho đọc kênh alpha của `color`.
+    dot: color,
+    has-dot: bool,
 }
 
 export component MenuPopup inherits Rectangle {
@@ -448,6 +452,13 @@ export component MenuPopup inherits Rectangle {
                 padding-right: Theme.s2;
                 spacing: Theme.s2;
                 alignment: start;
+                if item.has-dot: Rectangle {
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 6px;
+                    y: (parent.height - self.height) / 2;
+                    background: item.dot;
+                }
                 if item.icon != "": FluentIcon {
                     name: item.icon;
                     width: 16px;
