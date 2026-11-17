@@ -13,7 +13,8 @@ pub use archive::{archive_name, create_zip, extract_zip, hash_file, HashKind};
 pub use drives::{list_drives, DriveInfo};
 pub use listing::read_dir;
 pub use ops::{
-    copy_into, create_file, create_folder, delete_to_recycle_bin, directory_size,
-    is_hidden_on_disk, move_into, rename, suggested_copy_name,
+    copy_into, copy_text_to_clipboard, create_file, create_folder, delete_permanently,
+    delete_to_recycle_bin, directory_size, is_hidden_on_disk, move_into, open_terminal, rename,
+    suggested_copy_name,
 };
 pub use watch::{watch_directory, WatchHandle};

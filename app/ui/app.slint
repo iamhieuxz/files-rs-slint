@@ -60,6 +60,14 @@ export struct PropRow {
     value: string,
 }
 
+// Một lệnh trong Command Palette.
+export struct PaletteEntry {
+    id: string,
+    label: string,
+    icon: string,
+    shortcut: string,
+}
+
 export component AppWindow inherits Window {
     title: "Files RS";
     preferred-width: 1240px;
@@ -129,6 +137,11 @@ export component AppWindow inherits Window {
     in-out property <length> menu-y;
     in-out property <[MenuItem]> menu-items;
 
+    // Command Palette
+    in-out property <bool> palette-open: false;
+    in-out property <string> palette-query;
+    in-out property <[PaletteEntry]> palette-items;
+
     callback navigate(string);
     callback open-row(int);
     // mode: 0 = thay thế, 1 = shift (chọn khoảng), 2 = ctrl (thêm/bớt)
@@ -160,30 +173,60 @@ export component AppWindow inherits Window {
     callback row-context-menu(int, length, length);
     callback background-context-menu(length, length);
     callback toggle-theme();
+    // Command Palette
+    callback open-palette();
+    callback close-palette();
+    callback palette-changed(string);
+    callback palette-accepted(string);
 
     // ---- bàn phím ----
     key-root := FocusScope {
         key-pressed(event) => {
             if (event.modifiers.control) {
                 if (event.text == "l") { root.start-edit-address(); return accept; }
-                if (event.text == "t") { root.new-tab(); return accept; }
+                if (event.text == "t") {
+                    // Ctrl+Shift+T mở lại tab vừa đóng; Ctrl+T mở tab mới.
+                    if (event.modifiers.shift) { root.command("reopen-tab"); }
+                    else { root.new-tab(); }
+                    return accept;
+                }
                 if (event.text == "w") { root.close-tab(root.active-tab); return accept; }
-                if (event.text == "c") { root.command("copy"); return accept; }
+                // Ctrl+Tab / Ctrl+Shift+Tab chuyển tab.
+                if (event.text == Key.Tab) {
+                    if (event.modifiers.shift) { root.command("prev-tab"); }
+                    else { root.command("next-tab"); }
+                    return accept;
+                }
+                if (event.text == "c") {
+                    // Ctrl+Shift+C sao chép đường dẫn của mục đang chọn.
+                    if (event.modifiers.shift) { root.command("copy-path"); }
+                    else { root.command("copy"); }
+                    return accept;
+                }
                 if (event.text == "x") { root.command("cut"); return accept; }
                 if (event.text == "v") { root.command("paste"); return accept; }
                 if (event.text == "a") { root.command("select-all"); return accept; }
-                if (event.text == "h") { root.toggle-hidden(); return accept; }
+                if (event.text == "h") { root.command("toggle-hidden"); return accept; }
                 if (event.text == "f") { root.start-filter(); return accept; }
                 if (event.text == "r") { root.refresh(); return accept; }
+                if (event.text == "d") { root.command("duplicate-tab"); return accept; }
+                // Ctrl+Shift+P mở Command Palette.
+                if (event.text == "p" && event.modifiers.shift) { root.open-palette(); return accept; }
             }
             if (event.text == Key.F5) { root.refresh(); return accept; }
             if (event.text == Key.F2) { root.command("rename"); return accept; }
-            if (event.text == Key.Delete) { root.command("delete"); return accept; }
+            if (event.text == Key.Delete) {
+                // Shift+Delete xoá vĩnh viễn, bỏ qua Thùng rác.
+                if (event.modifiers.shift) { root.command("delete-permanent"); }
+                else { root.command("delete"); }
+                return accept;
+            }
             if (event.text == Key.Backspace) { root.go-up(); return accept; }
             if (event.text == Key.Return && !root.editing-address && !root.dialog-open) {
                 root.command("open-selected"); return accept;
             }
             if (event.text == Key.Escape) {
+                if (root.palette-open) { root.close-palette(); return accept; }
                 if (root.menu-open) { root.dismiss-menu(); return accept; }
                 if (root.filtering) { root.end-filter(); return accept; }
                 if (root.editing-address) { root.end-edit-address(); return accept; }
@@ -910,6 +953,107 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ================= COMMAND PALETTE =================
+    // Hộp nổi ở giữa trên cùng, gõ để lọc lệnh — giống Files và VS Code.
+    if root.palette-open: Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #00000040;
+        TouchArea { clicked => { root.close-palette(); } }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 80px;
+            width: 560px;
+            height: 420px;
+            border-radius: Theme.r-lg;
+            background: Theme.solid-tertiary;
+            border-width: 1px;
+            border-color: Theme.stroke-strong;
+            drop-shadow-blur: 32px;
+            drop-shadow-color: #00000040;
+            drop-shadow-offset-y: 8px;
+
+            VerticalLayout {
+                padding: Theme.s3;
+                spacing: Theme.s2;
+
+                Rectangle {
+                    height: 36px;
+                    palette-input := TextInput {
+                        vertical-alignment: center;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-subtitle;
+                        text: root.palette-query;
+                        edited => { root.palette-changed(self.text); }
+                        accepted => {
+                            if (root.palette-items.length > 0) {
+                                root.palette-accepted(root.palette-items[0].id);
+                            }
+                        }
+                    }
+                    init => { palette-input.focus(); }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    width: parent.width;
+                    background: Theme.stroke-divider;
+                }
+
+                ScrollView {
+                    VerticalLayout {
+                        spacing: 1px;
+                        for item in root.palette-items: Rectangle {
+                            height: 32px;
+                            border-radius: Theme.r-sm;
+                            background: pi.has-hover ? Theme.subtle-hover : transparent;
+                            HorizontalLayout {
+                                padding-left: Theme.s2;
+                                padding-right: Theme.s2;
+                                spacing: Theme.s2;
+                                FluentIcon {
+                                    name: item.icon;
+                                    width: 16px;
+                                    height: 16px;
+                                    y: (parent.height - self.height) / 2;
+                                    tint: Theme.text-secondary;
+                                }
+                                Text {
+                                    text: item.label;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                                if item.shortcut != "": Text {
+                                    text: item.shortcut;
+                                    color: Theme.text-tertiary;
+                                    font-size: Theme.font-caption;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            pi := TouchArea { clicked => { root.palette-accepted(item.id); } }
+                        }
+                        if root.palette-items.length == 0: Rectangle {
+                            height: 60px;
+                            Text {
+                                text: "Không có lệnh nào khớp";
+                                color: Theme.text-tertiary;
+                                font-size: Theme.font-body;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ================= MENU NGỮ CẢNH =================
     if root.menu-open: Rectangle {
         x: 0;
@@ -944,13 +1088,13 @@ export component AppWindow inherits Window {
             primary => { root.dialog-confirm(root.dialog-value); }
             cancelled => { root.dialog-cancel(); }
 
-            if root.dialog-kind == "confirm-delete": Text {
+            if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent": Text {
                 text: root.dialog-text;
                 color: Theme.text-secondary;
                 font-size: Theme.font-body;
                 wrap: word-wrap;
             }
-            if root.dialog-kind != "confirm-delete": Rectangle {
+            if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent": Rectangle {
                 height: 32px;
                 dialog-input := TextInput {
                     vertical-alignment: center;

@@ -68,6 +68,28 @@ Header và hàng dữ liệu cùng đọc các token này, nên một cái tên 
 | Mã băm MD5/SHA-1/SHA-256 | `md5` + `sha1` + `sha2`, đọc 64 KB mỗi lần |
 | Kích thước thư mục | `directory_size` đệ quy, chạy ở luồng nền, điền vào cột |
 | Bảng thuộc tính | tên, loại, kích thước, số mục, đường dẫn, ngày, thuộc tính |
+| Command Palette | 29 lệnh, Ctrl+Shift+P, lọc theo tên, Enter chạy lệnh đầu |
+| Mở lại tab đã đóng | ngăn xếp `closed_tabs`, Ctrl+Shift+T |
+| Nhân bản tab | Ctrl+D |
+| Chuyển tab | Ctrl+Tab / Ctrl+Shift+Tab, có vòng lặp |
+| Đóng nhóm tab | đóng tab khác / bên trái / bên phải / tất cả |
+| Xoá vĩnh viễn | `delete_permanently`, Shift+Delete, có hộp thoại cảnh báo |
+| Sao chép đường dẫn | `copy_text_to_clipboard` qua Win32 clipboard |
+| Mở Terminal | Windows Terminal `-d`, dự phòng `cmd /K cd` |
+| Ẩn/hiện phần mở rộng | `display_name`, không làm rỗng tên `.gitignore` |
+| Thư mục trước tệp | bật/tắt `folders_first`, sắp xếp lại tại chỗ |
+
+## Đối chiếu với Files gốc
+
+Files có 130+ action. Những cái **đã có** ở đây: điều hướng, tab, copy/cut/paste,
+xoá (thùng rác + vĩnh viễn), đổi tên, tạo mới, nén/giải nén, mã băm, kích thước
+thư mục, sắp xếp, lọc, ẩn mục ẩn, ẩn phần mở rộng, sidebar, preview, theme,
+command palette, sao chép đường dẫn, mở terminal.
+
+Những cái **chưa làm** (cần dịch vụ ngoài hoặc phạm vi lớn): dual pane, kéo-thả,
+tìm kiếm đệ quy, Git, FTP, cloud drive, tags, shelf, shortcut (.lnk), pin to
+Start, format drive, recycle bin browser, rotate ảnh, set wallpaper.
+
 
 ## Sửa sau vòng kiểm thử đầu
 

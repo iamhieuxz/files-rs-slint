@@ -66,6 +66,10 @@ pub enum Job {
     FolderSize {
         path: PathBuf,
     },
+    /// Delete without the Recycle Bin (Shift+Delete).
+    DeletePermanent {
+        paths: Vec<PathBuf>,
+    },
 }
 
 /// Result of a job.
@@ -209,6 +213,19 @@ fn run(job: Job) -> JobDone {
         Job::FolderSize { path } => {
             let bytes = files_fs::directory_size(&path);
             JobDone::FolderSize { path, bytes }
+        }
+        Job::DeletePermanent { paths } => {
+            let n = paths.len();
+            match files_fs::delete_permanently(&paths) {
+                Ok(count) => JobDone::OpDone {
+                    label: format!("Đã xoá vĩnh viễn {count}/{n} mục"),
+                    result: Ok(()),
+                },
+                Err(e) => JobDone::OpDone {
+                    label: format!("Xoá vĩnh viễn lỗi: {}", e.message),
+                    result: Err(e),
+                },
+            }
         }
     }
 }

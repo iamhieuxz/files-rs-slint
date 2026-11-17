@@ -105,6 +105,13 @@ struct App {
     /// Paths whose change should trigger a refresh, from the directory watcher.
     watch: Option<files_fs::WatchHandle>,
     watched_path: Option<PathBuf>,
+    /// Tabs the user closed, newest last. `Ctrl+Shift+T` pops from here, which
+    /// is what Files and every browser do — the path alone is enough to restore.
+    closed_tabs: Vec<PathBuf>,
+    /// Hide `.txt`-style extensions in the name column.
+    show_extensions: bool,
+    /// Group folders above files, or sort them together.
+    folders_first: bool,
 }
 
 impl App {
@@ -145,6 +152,9 @@ fn main() -> Result<(), slint::PlatformError> {
         results,
         watch: None,
         watched_path: None,
+        closed_tabs: Vec::new(),
+        show_extensions: true,
+        folders_first: true,
     }));
 
     build_sidebar(&ui);
@@ -282,7 +292,7 @@ fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let e = tab.entries.get(*entry_index)?;
             let (icon, glyph) = format::icon_for(e);
             Some(FileRow {
-                name: SharedString::from(e.name.as_str()),
+                name: SharedString::from(format::display_name(&e.name, e.is_dir(), a.show_extensions).as_str()),
                 path: SharedString::from(e.path.as_str()),
                 is_dir: e.is_dir(),
                 is_hidden: e.is_hidden,
@@ -624,7 +634,10 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 if idx >= s.tabs.len() {
                     return;
                 }
+                // Ghi nhớ để Ctrl+Shift+T mở lại được.
+                let closed = s.tabs[idx].current().to_path_buf();
                 s.tabs.remove(idx);
+                s.closed_tabs.push(closed);
                 if s.active >= s.tabs.len() {
                     s.active = s.tabs.len() - 1;
                 } else if s.active > idx {
@@ -745,6 +758,9 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 menu("cut", "Cắt", "cut", "Ctrl+X", i >= 0, false),
                 menu("rename", "Đổi tên", "rename", "F2", i >= 0, false),
                 menu("delete", "Xoá", "delete", "Del", i >= 0, false),
+                menu("delete-permanent", "Xoá vĩnh viễn", "delete", "Shift+Del", i >= 0, false),
+                menu("", "", "", "", false, true),
+                menu("copy-path", "Sao chép đường dẫn", "link", "Ctrl+Shift+C", i >= 0, false),
                 menu("", "", "", "", false, true),
                 menu("compress", "Nén thành ZIP", "folder_zip", "", i >= 0, false),
                 menu("extract", "Giải nén", "folder_open", "", is_archive, false),
@@ -774,6 +790,10 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 menu("select-all", "Chọn tất cả", "checkmark", "Ctrl+A", true, false),
                 menu("", "", "", "", false, true),
                 menu("refresh", "Làm mới", "arrow_clockwise", "F5", true, false),
+                menu("open-terminal", "Mở Terminal tại đây", "code", "", true, false),
+                menu("", "", "", "", false, true),
+                menu("toggle-extensions", "Ẩn/hiện phần mở rộng", "document", "", true, false),
+                menu("toggle-folders-first", "Thư mục trước tệp", "arrow_sort", "", true, false),
                 menu("toggle-hidden", if a.borrow().show_hidden { "Ẩn mục ẩn" } else { "Hiện mục ẩn" }, "eye", "Ctrl+H", true, false),
             ];
             ui.set_menu_items(ModelRc::new(VecModel::from(items)));
@@ -784,11 +804,56 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
     {
         let w = ui.as_weak();
+        ui.on_open_palette(move || {
+            let Some(ui) = w.upgrade() else { return };
+            ui.set_palette_query(SharedString::default());
+            ui.set_palette_items(palette_model(""));
+            ui.set_palette_open(true);
+        });
+    }
+    {
+        let w = ui.as_weak();
+        ui.on_close_palette(move || {
+            let Some(ui) = w.upgrade() else { return };
+            ui.set_palette_open(false);
+        });
+    }
+    {
+        let w = ui.as_weak();
+        ui.on_palette_changed(move |q| {
+            let Some(ui) = w.upgrade() else { return };
+            ui.set_palette_items(palette_model(q.as_str()));
+        });
+    }
+    {
+        let (w, a) = (ui.as_weak(), app.clone());
+        ui.on_palette_accepted(move |id| {
+            let Some(ui) = w.upgrade() else { return };
+            ui.set_palette_open(false);
+            run_command(&ui, &a, id.as_str());
+        });
+    }
+    {
+        let w = ui.as_weak();
         ui.on_sidebar_toggled(move |_id| {
             let Some(ui) = w.upgrade() else { return };
             let _ = &ui;
         });
     }
+}
+
+/// Build the palette model for `query`.
+fn palette_model(query: &str) -> ModelRc<PaletteEntry> {
+    let items: Vec<PaletteEntry> = filter_palette(query)
+        .into_iter()
+        .map(|c| PaletteEntry {
+            id: SharedString::from(c.id),
+            label: SharedString::from(c.label),
+            icon: SharedString::from(c.icon),
+            shortcut: SharedString::from(c.shortcut),
+        })
+        .collect();
+    ModelRc::new(VecModel::from(items))
 }
 
 fn menu(
@@ -1042,6 +1107,46 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
             }
         }
         "nav-up" | "nav-down" => move_selection(ui, app, id == "nav-down"),
+        // ---- tệp: xoá vĩnh viễn, sao chép đường dẫn, terminal ----
+        "delete-permanent" => ask_delete_permanent(ui, app),
+        "copy-path" => copy_selected_path(ui, app),
+        "open-terminal" => open_terminal_here(ui, app),
+        // ---- hiển thị ----
+        "toggle-extensions" => {
+            let v = !app.borrow().show_extensions;
+            app.borrow_mut().show_extensions = v;
+            push_view(ui, app);
+            ui.set_status_tertiary(SharedString::from(
+                if v { "Đang hiện phần mở rộng" } else { "Đang ẩn phần mở rộng" },
+            ));
+        }
+        "toggle-folders-first" => {
+            let v = !app.borrow().folders_first;
+            app.borrow_mut().folders_first = v;
+            // Sắp xếp lại ngay, không cần đọc lại thư mục.
+            {
+                let mut s = app.borrow_mut();
+                let active = s.active;
+                let tab = &mut s.tabs[active];
+                tab.sort.folders_first = v;
+                let spec = tab.sort;
+                spec.sort(&mut tab.entries);
+                tab.rebuild_visible();
+            }
+            push_view(ui, app);
+            ui.set_status_tertiary(SharedString::from(
+                if v { "Thư mục trước tệp" } else { "Sắp xếp chung" },
+            ));
+        }
+        // ---- tab nâng cao ----
+        "reopen-tab" => reopen_closed_tab(ui, app),
+        "duplicate-tab" => duplicate_tab(ui, app),
+        "next-tab" => cycle_tab(ui, app, 1),
+        "prev-tab" => cycle_tab(ui, app, -1),
+        "close-other-tabs" => close_other_tabs(ui, app),
+        "close-tabs-left" => close_tabs_side(ui, app, true),
+        "close-tabs-right" => close_tabs_side(ui, app, false),
+        "close-all-tabs" => close_all_tabs(ui, app),
         _ => {}
     }
 }
@@ -1052,6 +1157,219 @@ fn first_selected_visible(app: &Rc<RefCell<App>>) -> Option<usize> {
     tab.visible
         .iter()
         .position(|i| tab.selection.contains(i))
+}
+
+// ---------------------------------------------------------------- command palette
+
+/// One entry in the command palette.
+///
+/// The palette is the discovery surface for everything the app can do: a user
+/// who does not know the shortcut can still find the command by typing.
+pub struct PaletteCommand {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub icon: &'static str,
+    pub shortcut: &'static str,
+}
+
+pub const PALETTE: &[PaletteCommand] = &[
+    PaletteCommand { id: "new-folder", label: "Thư mục mới", icon: "folder", shortcut: "Ctrl+Shift+N" },
+    PaletteCommand { id: "new-file", label: "Tệp mới", icon: "document", shortcut: "" },
+    PaletteCommand { id: "copy", label: "Sao chép", icon: "copy", shortcut: "Ctrl+C" },
+    PaletteCommand { id: "cut", label: "Cắt", icon: "cut", shortcut: "Ctrl+X" },
+    PaletteCommand { id: "paste", label: "Dán", icon: "clipboard_paste", shortcut: "Ctrl+V" },
+    PaletteCommand { id: "rename", label: "Đổi tên", icon: "rename", shortcut: "F2" },
+    PaletteCommand { id: "delete", label: "Xoá vào Thùng rác", icon: "delete", shortcut: "Del" },
+    PaletteCommand { id: "delete-permanent", label: "Xoá vĩnh viễn", icon: "delete", shortcut: "Shift+Del" },
+    PaletteCommand { id: "copy-path", label: "Sao chép đường dẫn", icon: "link", shortcut: "Ctrl+Shift+C" },
+    PaletteCommand { id: "compress", label: "Nén thành ZIP", icon: "folder_zip", shortcut: "" },
+    PaletteCommand { id: "extract", label: "Giải nén", icon: "folder_open", shortcut: "" },
+    PaletteCommand { id: "folder-size", label: "Tính kích thước thư mục", icon: "calculator", shortcut: "" },
+    PaletteCommand { id: "open-terminal", label: "Mở Terminal tại đây", icon: "code", shortcut: "" },
+    PaletteCommand { id: "toggle-hidden", label: "Ẩn/hiện mục ẩn", icon: "eye", shortcut: "Ctrl+H" },
+    PaletteCommand { id: "toggle-extensions", label: "Ẩn/hiện phần mở rộng", icon: "document", shortcut: "" },
+    PaletteCommand { id: "toggle-folders-first", label: "Thư mục trước tệp", icon: "arrow_sort", shortcut: "" },
+    PaletteCommand { id: "toggle-sidebar", label: "Ẩn/hiện sidebar", icon: "panel_left", shortcut: "" },
+    PaletteCommand { id: "toggle-preview", label: "Ẩn/hiện panel xem trước", icon: "panel_right", shortcut: "" },
+    PaletteCommand { id: "view-details", label: "Xem dạng danh sách", icon: "list", shortcut: "" },
+    PaletteCommand { id: "view-grid", label: "Xem dạng lưới", icon: "grid", shortcut: "" },
+    PaletteCommand { id: "reopen-tab", label: "Mở lại tab đã đóng", icon: "window", shortcut: "Ctrl+Shift+T" },
+    PaletteCommand { id: "duplicate-tab", label: "Nhân bản tab", icon: "window", shortcut: "Ctrl+D" },
+    PaletteCommand { id: "next-tab", label: "Tab kế tiếp", icon: "chevron_right", shortcut: "Ctrl+Tab" },
+    PaletteCommand { id: "prev-tab", label: "Tab trước", icon: "chevron_left", shortcut: "Ctrl+Shift+Tab" },
+    PaletteCommand { id: "close-other-tabs", label: "Đóng các tab khác", icon: "dismiss", shortcut: "" },
+    PaletteCommand { id: "close-all-tabs", label: "Đóng tất cả tab", icon: "dismiss", shortcut: "" },
+    PaletteCommand { id: "refresh", label: "Làm mới", icon: "arrow_clockwise", shortcut: "F5" },
+    PaletteCommand { id: "go-up", label: "Lên một cấp", icon: "arrow_upload", shortcut: "Backspace" },
+    PaletteCommand { id: "toggle-theme", label: "Đổi sáng/tối", icon: "weather_moon", shortcut: "" },
+];
+
+/// Commands matching `query`, case-insensitive, in palette order.
+///
+/// An empty query returns everything, which is what the palette shows on open:
+/// a browsable list beats an empty box.
+pub fn filter_palette(query: &str) -> Vec<&'static PaletteCommand> {
+    let q = query.trim().to_lowercase();
+    PALETTE
+        .iter()
+        .filter(|c| q.is_empty() || c.label.to_lowercase().contains(&q))
+        .collect()
+}
+
+// ---------------------------------------------------------------- file commands
+
+/// Ask before a permanent delete: there is no undo, so the dialog is the guard.
+fn ask_delete_permanent(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let n = app.borrow().tab().selection.len();
+    if n == 0 {
+        return;
+    }
+    ui.set_dialog_kind(SharedString::from("confirm-delete-permanent"));
+    ui.set_dialog_title(SharedString::from("Xoá vĩnh viễn"));
+    ui.set_dialog_text(SharedString::from(
+        format!("Xoá {n} mục và KHÔNG chuyển vào Thùng rác? Không thể hoàn tác.").as_str(),
+    ));
+    ui.set_dialog_primary_label(SharedString::from("Xoá vĩnh viễn"));
+    ui.set_dialog_has_input(false);
+    ui.set_dialog_value(SharedString::default());
+    ui.set_dialog_open(true);
+}
+
+/// Put the selected paths on the clipboard as text, one per line.
+fn copy_selected_path(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let paths = app.borrow().tab().selected_paths();
+    // Nothing selected means "copy where I am", which is what Files does.
+    let text = if paths.is_empty() {
+        app.borrow().tab().current().to_string_lossy().into_owned()
+    } else {
+        paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\r\n")
+    };
+    match files_fs::copy_text_to_clipboard(&text) {
+        Ok(()) => ui.set_status_tertiary(SharedString::from("Đã sao chép đường dẫn")),
+        Err(e) => ui.set_error_text(SharedString::from(e.message.as_str())),
+    }
+}
+
+fn open_terminal_here(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let dir = app.borrow().tab().current().to_path_buf();
+    if let Err(e) = files_fs::open_terminal(&dir) {
+        ui.set_error_text(SharedString::from(e.message.as_str()));
+    }
+}
+
+// ---------------------------------------------------------------- tab commands
+
+/// Restore the most recently closed tab.
+fn reopen_closed_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let path = app.borrow_mut().closed_tabs.pop();
+    let Some(path) = path else { return };
+    // The folder may have been deleted while the tab was closed.
+    if !path.is_dir() {
+        ui.set_error_text(SharedString::from(
+            format!("Thư mục đã đóng không còn tồn tại: {}", path.display()).as_str(),
+        ));
+        return;
+    }
+    {
+        let mut s = app.borrow_mut();
+        s.tabs.push(Tab::new(path));
+        s.active = s.tabs.len() - 1;
+    }
+    sync_tabs(ui, &app.borrow());
+    reload(ui, app);
+}
+
+/// Open a copy of the active tab, keeping its folder and history.
+fn duplicate_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let start = app.borrow().tab().current().to_path_buf();
+    {
+        let mut s = app.borrow_mut();
+        s.tabs.push(Tab::new(start));
+        s.active = s.tabs.len() - 1;
+    }
+    sync_tabs(ui, &app.borrow());
+    reload(ui, app);
+}
+
+/// Move `delta` tabs along, wrapping at both ends.
+fn cycle_tab(ui: &AppWindow, app: &Rc<RefCell<App>>, delta: i32) {
+    {
+        let mut s = app.borrow_mut();
+        let n = s.tabs.len();
+        if n <= 1 {
+            return;
+        }
+        let cur = s.active as i32;
+        s.active = (cur + delta).rem_euclid(n as i32) as usize;
+    }
+    sync_tabs(ui, &app.borrow());
+    reload(ui, app);
+}
+
+fn close_other_tabs(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    {
+        let mut s = app.borrow_mut();
+        if s.tabs.len() <= 1 {
+            return;
+        }
+        let keep = s.active;
+        let kept = s.tabs.remove(keep);
+        // Every removed tab becomes reopenable, oldest first.
+        let removed: Vec<PathBuf> = s.tabs.drain(..).map(|t| t.current().to_path_buf()).collect();
+        s.closed_tabs.extend(removed);
+        s.tabs.push(kept);
+        s.active = 0;
+    }
+    sync_tabs(ui, &app.borrow());
+    reload(ui, app);
+}
+
+/// Close every tab to the left (`left == true`) or right of the active one.
+fn close_tabs_side(ui: &AppWindow, app: &Rc<RefCell<App>>, left: bool) {
+    {
+        let mut s = app.borrow_mut();
+        if s.tabs.len() <= 1 {
+            return;
+        }
+        let active = s.active;
+        let (range, new_active) = if left {
+            (0..active, 0usize)
+        } else {
+            ((active + 1)..s.tabs.len(), active)
+        };
+        let mut removed = Vec::new();
+        for i in range.rev() {
+            removed.push(s.tabs.remove(i).current().to_path_buf());
+        }
+        for path in removed {
+            s.closed_tabs.push(path);
+        }
+        s.active = new_active.min(s.tabs.len().saturating_sub(1));
+    }
+    sync_tabs(ui, &app.borrow());
+    reload(ui, app);
+}
+
+/// Close everything and open one fresh tab, like Files' "Close all tabs".
+fn close_all_tabs(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let start = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("C:\\"));
+    {
+        let mut s = app.borrow_mut();
+        let paths: Vec<PathBuf> = s.tabs.iter().map(|t| t.current().to_path_buf()).collect();
+        for p in paths {
+            s.closed_tabs.push(p);
+        }
+        s.tabs = vec![Tab::new(start)];
+        s.active = 0;
+    }
+    sync_tabs(ui, &app.borrow());
+    reload(ui, app);
 }
 
 fn move_selection(ui: &AppWindow, app: &Rc<RefCell<App>>, down: bool) {
@@ -1209,6 +1527,14 @@ fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
                 app.borrow().worker.submit(Job::Delete { paths });
                 ui.set_busy(true);
                 ui.set_busy_text(SharedString::from("Đang chuyển vào Thùng rác…"));
+            }
+        }
+        "confirm-delete-permanent" => {
+            let paths = app.borrow().tab().selected_paths();
+            if !paths.is_empty() {
+                app.borrow().worker.submit(Job::DeletePermanent { paths });
+                ui.set_busy(true);
+                ui.set_busy_text(SharedString::from("Đang xoá vĩnh viễn…"));
             }
         }
         _ => {}
@@ -1411,4 +1737,49 @@ fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         }
     });
     std::mem::forget(timer);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_palette_query_lists_every_command() {
+        // The palette must be browsable on open: an empty box teaches nothing.
+        assert_eq!(filter_palette("").len(), PALETTE.len());
+    }
+
+    #[test]
+    fn a_query_filters_case_insensitively() {
+        let hits = filter_palette("ĐỔI TÊN");
+        assert!(
+            hits.iter().any(|c| c.id == "rename"),
+            "Vietnamese is case-folded too"
+        );
+    }
+
+    #[test]
+    fn a_query_with_no_match_returns_nothing() {
+        assert!(filter_palette("zzzznotacommand").is_empty());
+    }
+
+    #[test]
+    fn every_palette_id_is_unique() {
+        // Duplicate ids would make two entries run the same command, which is
+        // how a palette silently rots.
+        let mut ids: Vec<&str> = PALETTE.iter().map(|c| c.id).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "duplicate command id in PALETTE");
+    }
+
+    #[test]
+    fn grid_columns_never_returns_zero() {
+        // A zero column count would divide by zero when chunking rows.
+        assert_eq!(grid_columns(0.0), 1);
+        assert_eq!(grid_columns(-50.0), 1);
+        assert_eq!(grid_columns(132.0), 1);
+        assert_eq!(grid_columns(280.0), 2);
+    }
 }

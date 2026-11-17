@@ -70,6 +70,19 @@ pub fn format_time(ms: Option<i64>) -> String {
     }
 }
 
+/// Name shown in the list: the raw name, or without its extension when the user
+/// turned extensions off. A folder is never stripped, and a name that is *only*
+/// an extension (`.gitignore`) is left alone so it does not become empty.
+pub fn display_name(name: &str, is_dir: bool, show_extensions: bool) -> String {
+    if show_extensions || is_dir {
+        return name.to_string();
+    }
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => stem.to_string(),
+        _ => name.to_string(),
+    }
+}
+
 /// Colour for a pinned folder in the sidebar, matched on the folder name.
 pub fn folder_glyph(name: &str) -> (&'static str, u32) {
     match name {
@@ -179,6 +192,22 @@ mod tests {
     fn pinned_folders_have_their_own_colours() {
         assert_eq!(folder_glyph("Downloads").0, "arrow_download");
         assert_eq!(folder_glyph("Something Else").0, "folder");
+    }
+
+    #[test]
+    fn hiding_extensions_strips_only_real_files() {
+        assert_eq!(display_name("notes.txt", false, false), "notes");
+        assert_eq!(display_name("notes.txt", false, true), "notes.txt");
+        // A folder named like a file keeps its dots: `v1.2` is a real folder name.
+        assert_eq!(display_name("v1.2", true, false), "v1.2");
+    }
+
+    #[test]
+    fn hiding_extensions_never_empties_a_name() {
+        // `.gitignore` has no stem; stripping would leave an empty row.
+        assert_eq!(display_name(".gitignore", false, false), ".gitignore");
+        // A trailing dot is not an extension either.
+        assert_eq!(display_name("weird.", false, false), "weird.");
     }
 
     #[test]

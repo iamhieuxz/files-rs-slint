@@ -251,6 +251,120 @@ pub fn suggested_copy_name(source: &Path) -> String {
     format!("{stem} - Bản sao{ext}")
 }
 
+/// Delete entries permanently, bypassing the Recycle Bin.
+///
+/// Files offers this behind Shift+Delete and warns first, because there is no
+/// undo. Callers must confirm with the user before reaching here.
+pub fn delete_permanently(paths: &[PathBuf]) -> Result<usize, FsError> {
+    let mut done = 0usize;
+    for p in paths {
+        let meta = match std::fs::symlink_metadata(p) {
+            Ok(m) => m,
+            // Already gone: treat as done so a batch does not stop halfway.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                done += 1;
+                continue;
+            }
+            Err(e) => return Err(FsError::from(e)),
+        };
+        if meta.is_dir() {
+            std::fs::remove_dir_all(p).map_err(FsError::from)?;
+        } else {
+            std::fs::remove_file(p).map_err(FsError::from)?;
+        }
+        done += 1;
+    }
+    Ok(done)
+}
+
+/// Copy text to the Windows clipboard.
+///
+/// Uses the same Win32 clipboard the Shell uses, so the value pastes into any
+/// application. Returns an error rather than panicking when another process
+/// holds the clipboard open.
+pub fn copy_text_to_clipboard(text: &str) -> Result<(), FsError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Foundation::{GlobalFree, HANDLE};
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+        };
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+        // The clipboard wants UTF-16, NUL-terminated.
+        let wide: Vec<u16> = std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let bytes = wide.len() * std::mem::size_of::<u16>();
+
+        // SAFETY: every call is checked; the buffer is freed on failure and
+        // ownership passes to the system on success (per the Win32 contract).
+        unsafe {
+            OpenClipboard(None).map_err(|e| {
+                FsError::new("clipboard_busy", format!("Không mở được clipboard: {e}"))
+            })?;
+
+            let result = (|| -> Result<(), FsError> {
+                EmptyClipboard().map_err(|e| {
+                    FsError::new("clipboard_failed", format!("Không xoá được clipboard: {e}"))
+                })?;
+                let handle = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(|e| {
+                    FsError::new("clipboard_failed", format!("Không cấp phát được bộ nhớ: {e}"))
+                })?;
+                let ptr = GlobalLock(handle);
+                if ptr.is_null() {
+                    let _ = GlobalFree(Some(handle));
+                    return Err(FsError::new("clipboard_failed", "Không khoá được bộ nhớ"));
+                }
+                std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
+                let _ = GlobalUnlock(handle);
+                // CF_UNICODETEXT = 13
+                if let Err(e) = SetClipboardData(13, Some(HANDLE(handle.0))) {
+                    let _ = GlobalFree(Some(handle));
+                    return Err(FsError::new(
+                        "clipboard_failed",
+                        format!("Không đặt được dữ liệu: {e}"),
+                    ));
+                }
+                Ok(())
+            })();
+
+            let _ = CloseClipboard();
+            result
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = text;
+        Err(FsError::new("unsupported", "Clipboard chỉ có trên Windows"))
+    }
+}
+
+/// Open a terminal (Windows Terminal if present, else `cmd`) in `dir`.
+pub fn open_terminal(dir: &Path) -> Result<(), FsError> {
+    // Windows Terminal is the default on 11 and understands `-d`.
+    let wt = std::process::Command::new("wt.exe")
+        .arg("-d")
+        .arg(dir)
+        .spawn();
+    if wt.is_ok() {
+        return Ok(());
+    }
+    std::process::Command::new("cmd.exe")
+        .arg("/C")
+        .arg("start")
+        .arg("cmd.exe")
+        .arg("/K")
+        .arg("cd")
+        .arg("/D")
+        .arg(dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| FsError::new("spawn_failed", format!("Không mở được terminal: {e}")))
+}
+
 /// Total size of everything under `dir`, in bytes.
 ///
 /// This walks the tree, which on a large folder can take seconds; callers must
