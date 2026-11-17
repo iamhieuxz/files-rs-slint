@@ -49,6 +49,19 @@ pub fn properties(entry: &Entry) -> Vec<PropRow> {
         rows.push(row("Kích thước", format::format_size(entry.size)));
     }
 
+    // Với shortcut, đích là thông tin quan trọng nhất — người dùng cần biết
+    // nó trỏ đi đâu trước khi mở.
+    if entry
+        .extension
+        .as_deref()
+        .is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+    {
+        let target = files_fs::shortcut_target(std::path::Path::new(&entry.path))
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "không đọc được".to_string());
+        rows.push(row("Trỏ tới", target));
+    }
+
     rows.push(row(
         "Đường dẫn",
         Path::new(&entry.path)

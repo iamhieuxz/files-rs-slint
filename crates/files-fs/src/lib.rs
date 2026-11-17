@@ -26,7 +26,7 @@ pub use ops::{
     copy_into, copy_into_with, copy_text_to_clipboard, create_file, create_folder, ConflictPolicy,
     delete_permanently,
     delete_to_recycle_bin, directory_size, is_hidden_on_disk, move_into, move_into_with,
-    open_terminal, rename,
+    open_terminal, rename, rotate_image_clockwise, shortcut_target,
     suggested_copy_name,
 };
 pub use watch::{watch_directory, WatchHandle};

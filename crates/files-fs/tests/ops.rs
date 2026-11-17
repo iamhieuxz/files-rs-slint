@@ -257,3 +257,102 @@ fn the_default_policy_still_refuses_to_overwrite() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_shortcut_reports_its_target() {
+    // Đọc đích bằng IShellLinkW trên một shortcut thật do Windows tạo.
+    let root = scratch("lnk-target");
+    let target = root.join("dich.txt");
+    std::fs::write(&target, b"x").unwrap();
+    let link = root.join("shortcut.lnk");
+
+    // Tạo shortcut bằng PowerShell để không phải tự dựng định dạng .lnk.
+    let script = format!(
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}'); $s.TargetPath='{}'; $s.Save()",
+        link.display(),
+        target.display()
+    );
+    let ok = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok || !link.exists() {
+        // Máy không cho tạo shortcut: bỏ qua thay vì báo hỏng.
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let got = files_fs::shortcut_target(&link).expect("phải đọc được đích");
+    assert_eq!(
+        got.to_string_lossy().to_lowercase(),
+        target.to_string_lossy().to_lowercase()
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_file_that_is_not_a_shortcut_returns_none() {
+    // Gọi nhầm trên tệp thường không được panic.
+    let root = scratch("lnk-not");
+    let f = root.join("thuong.txt");
+    std::fs::write(&f, b"x").unwrap();
+    assert!(files_fs::shortcut_target(&f).is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn rotating_a_png_swaps_its_dimensions() {
+    // Xoay 90° phải đổi rộng↔cao. Đây là bằng chứng ảnh thật sự bị xoay,
+    // không chỉ là ghi lại tệp.
+    let root = scratch("rotate-png");
+    let src = root.join("anh.png");
+    // Tạo PNG 4×2 bằng PowerShell + System.Drawing.
+    let script = format!(
+        "Add-Type -AssemblyName System.Drawing; \
+         $b = New-Object System.Drawing.Bitmap 4,2; \
+         $g = [System.Drawing.Graphics]::FromImage($b); \
+         $g.Clear([System.Drawing.Color]::Red); \
+         $b.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); \
+         $g.Dispose(); $b.Dispose()",
+        src.display()
+    );
+    let ok = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok || !src.exists() {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let before = read_png_size(&src);
+    files_fs::rotate_image_clockwise(&src).expect("phải xoay được");
+    let after = read_png_size(&src);
+
+    assert_eq!(before.0, after.1, "rộng trước phải thành cao sau");
+    assert_eq!(before.1, after.0, "cao trước phải thành rộng sau");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Đọc rộng×cao từ header PNG (IHDR) mà không cần thư viện ảnh.
+fn read_png_size(path: &std::path::Path) -> (u32, u32) {
+    let b = std::fs::read(path).expect("đọc được");
+    assert_eq!(&b[12..16], b"IHDR", "không phải PNG hợp lệ");
+    let w = u32::from_be_bytes([b[16], b[17], b[18], b[19]]);
+    let h = u32::from_be_bytes([b[20], b[21], b[22], b[23]]);
+    (w, h)
+}
+
+#[test]
+fn rotating_an_unsupported_extension_is_refused() {
+    // Không được ghi ra tệp hỏng cho định dạng không hỗ trợ.
+    let root = scratch("rotate-bad");
+    let f = root.join("tai-lieu.txt");
+    std::fs::write(&f, b"khong phai anh").unwrap();
+    let err = files_fs::rotate_image_clockwise(&f).expect_err("phải từ chối");
+    assert_eq!(err.code, "unsupported");
+    assert_eq!(std::fs::read(&f).unwrap(), b"khong phai anh", "tệp gốc không đổi");
+    let _ = std::fs::remove_dir_all(&root);
+}

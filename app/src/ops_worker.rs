@@ -71,6 +71,10 @@ pub enum Job {
     FolderSize {
         path: PathBuf,
     },
+    /// Xoay ảnh 90° và ghi đè.
+    Rotate {
+        paths: Vec<PathBuf>,
+    },
     /// Tìm đệ quy dưới một thư mục.
     Search {
         root: PathBuf,
@@ -412,6 +416,31 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 Err(e) => (format!("Tính mã băm lỗi: {}", e.message), Err(e)),
             };
             JobDone::OpDone { label, result, undo: None }
+        }
+        Job::Rotate { paths } => {
+            progress.begin(paths.len());
+            let mut done = 0usize;
+            let mut first_err = None;
+            for p in &paths {
+                if progress.cancelled() {
+                    break;
+                }
+                match files_fs::rotate_image_clockwise(p) {
+                    Ok(()) => done += 1,
+                    Err(e) => {
+                        if first_err.is_none() {
+                            first_err = Some(e);
+                        }
+                    }
+                }
+                progress.tick();
+            }
+            progress.finish();
+            let label = match &first_err {
+                Some(e) => format!("Xoay ảnh lỗi: {}", e.message),
+                None => format!("Đã xoay {done}/{} ảnh", paths.len()),
+            };
+            JobDone::OpDone { label, result: first_err.map_or(Ok(()), Err), undo: None }
         }
         Job::Search { root, query, max_depth, limit, token } => {
             let opts = files_fs::SearchOptions { query, max_depth, limit };

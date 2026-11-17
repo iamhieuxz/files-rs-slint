@@ -1320,13 +1320,13 @@ export component AppWindow inherits Window {
             secondary => { root.dialog-secondary(); }
             cancelled => { root.dialog-cancel(); }
 
-            if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent" || root.dialog-kind == "confirm-default" || root.dialog-kind == "paste-conflict": Text {
+            if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent" || root.dialog-kind == "confirm-default" || root.dialog-kind == "paste-conflict" || root.dialog-kind == "confirm-rotate": Text {
                 text: root.dialog-text;
                 color: Theme.text-secondary;
                 font-size: Theme.font-body;
                 wrap: word-wrap;
             }
-            if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent" && root.dialog-kind != "confirm-default" && root.dialog-kind != "paste-conflict": Rectangle {
+            if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent" && root.dialog-kind != "confirm-default" && root.dialog-kind != "paste-conflict" && root.dialog-kind != "confirm-rotate": Rectangle {
                 // Ô nhập phải có khung nhìn thấy được: trước đây nó trong suốt
                 // nên hộp thoại đổi tên / tạo mới trông như không có chỗ gõ.
                 height: 36px;

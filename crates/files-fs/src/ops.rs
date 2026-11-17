@@ -464,3 +464,205 @@ pub fn directory_size(dir: &Path) -> u64 {
     }
     total
 }
+
+/// Đích mà một tệp `.lnk` trỏ tới.
+///
+/// Đọc bằng `IShellLinkW` qua COM vì định dạng `.lnk` là một shell item, không
+/// phải tệp văn bản. Trả `None` khi tệp không phải shortcut hoặc đích không
+/// đọc được — đó là chuyện bình thường với shortcut hỏng, không phải lỗi.
+#[cfg(windows)]
+pub fn shortcut_target(path: &Path) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+
+    // COM phải được khởi tạo trên luồng gọi; worker thì chưa.
+    // SAFETY: `None` hợp lệ cho tham số reserved. Không `CoUninitialize` vì
+    // luồng sống lâu hơn lời gọi và còn dùng Shell tiếp.
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+
+    // SAFETY: mọi lời gọi đều kiểm tra kết quả; buffer sống đủ lâu.
+    unsafe {
+        let link: IShellLinkW =
+            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let persist: IPersistFile = link.cast().ok()?;
+        persist.Load(PCWSTR(wide.as_ptr()), windows::Win32::System::Com::STGM_READ).ok()?;
+
+        let mut buf = [0u16; 1024];
+        link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+        let end = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+        if end == 0 {
+            return None;
+        }
+        Some(PathBuf::from(String::from_utf16_lossy(&buf[..end])))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn shortcut_target(_path: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// Xoay ảnh 90° theo chiều kim đồng hồ và ghi đè lên chính tệp đó.
+///
+/// Chỉ hỗ trợ định dạng mà Windows đọc/ghi được qua WIC (JPEG, PNG, BMP, GIF,
+/// TIFF). Định dạng khác trả lỗi rõ ràng thay vì ghi ra tệp hỏng.
+///
+/// Xoay là thao tác phá huỷ: ghi đè lên tệp gốc nên không có bản sao để lùi.
+/// Người dùng được hỏi trước ở tầng UI.
+pub fn rotate_image_clockwise(path: &Path) -> Result<(), FsError> {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "bmp" | "gif" | "tif" | "tiff") {
+        return Err(FsError::new(
+            "unsupported",
+            format!("Không xoay được định dạng .{ext}"),
+        ));
+    }
+
+    // Đọc toàn bộ ảnh vào bộ nhớ, xoay, rồi ghi đè. Làm vậy để không bao giờ
+    // để lại tệp dở dang: ghi xong mới thay tệp cũ.
+    let bytes = std::fs::read(path).map_err(FsError::from)?;
+    let rotated = rotate_bytes(&bytes, &ext)?;
+
+    let tmp = path.with_extension(format!("{ext}.rot"));
+    std::fs::write(&tmp, &rotated).map_err(FsError::from)?;
+    // Thay thế nguyên tử: nếu `rename` lỗi thì tệp gốc vẫn còn nguyên.
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        FsError::from(e)
+    })?;
+    Ok(())
+}
+
+/// Xoay 90° thuần trên byte ảnh, tách khỏi phần đọc/ghi để test được.
+#[cfg(windows)]
+fn rotate_bytes(bytes: &[u8], ext: &str) -> Result<Vec<u8>, FsError> {
+    use windows::Win32::Graphics::Imaging::WICBitmapEncoderNoCache;
+    use windows::Win32::Graphics::Imaging::{
+        CLSID_WICImagingFactory, IWICImagingFactory, WICBitmapTransformRotate90,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    };
+
+    // SAFETY: `None` hợp lệ cho tham số reserved của CoInitializeEx.
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+
+    // SAFETY: mọi lời gọi đều kiểm tra kết quả; mọi con trỏ COM do Windows cấp.
+    unsafe {
+        let factory: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| FsError::new("image_failed", format!("WIC: {e}")))?;
+
+        let stream = factory
+            .CreateStream()
+            .map_err(|e| FsError::new("image_failed", format!("tạo stream: {e}")))?;
+        stream
+            .InitializeFromMemory(bytes)
+            .map_err(|e| FsError::new("image_failed", format!("nạp ảnh: {e}")))?;
+
+        let decoder = factory
+            .CreateDecoderFromStream(&stream, std::ptr::null(), Default::default())
+            .map_err(|e| FsError::new("image_failed", format!("giải mã: {e}")))?;
+        let frame = decoder
+            .GetFrame(0)
+            .map_err(|e| FsError::new("image_failed", format!("đọc khung: {e}")))?;
+        let processor = factory
+            .CreateBitmapFlipRotator()
+            .map_err(|e| FsError::new("image_failed", format!("tạo bộ xoay: {e}")))?;
+        processor
+            .Initialize(&frame, WICBitmapTransformRotate90)
+            .map_err(|e| FsError::new("image_failed", format!("xoay: {e}")))?;
+
+        // Stream đích tạo bằng `SHCreateMemStream`: nó đã có bộ đệm sẵn, khác
+        // `IWICStream` chưa khởi tạo (encoder từ chối stream đó).
+        let out: windows::Win32::System::Com::IStream =
+            windows::Win32::UI::Shell::SHCreateMemStream(None)
+                .ok_or_else(|| FsError::new("image_failed", "không tạo được bộ đệm đích"))?;
+        let encoder = factory
+            .CreateEncoder(&guid_for(ext), std::ptr::null())
+            .map_err(|e| FsError::new("image_failed", format!("tạo encoder: {e}")))?;
+        encoder
+            .Initialize(&out, WICBitmapEncoderNoCache)
+            .map_err(|e| FsError::new("image_failed", format!("mở encoder: {e}")))?;
+        // WIC trả khung qua con trỏ ra, không phải giá trị trả về.
+        let mut frame_out: Option<windows::Win32::Graphics::Imaging::IWICBitmapFrameEncode> = None;
+        let mut options_out: Option<
+            windows::Win32::System::Com::StructuredStorage::IPropertyBag2,
+        > = None;
+        encoder
+            .CreateNewFrame(&mut frame_out, &mut options_out)
+            .map_err(|e| FsError::new("image_failed", format!("khung đích: {e}")))?;
+        let encoder_frame = frame_out
+            .ok_or_else(|| FsError::new("image_failed", "không tạo được khung đích"))?;
+        // Không có tuỳ chọn encoder nào: `None` là hợp lệ.
+        encoder_frame
+            .Initialize(None)
+            .map_err(|e| FsError::new("image_failed", format!("khởi tạo khung: {e}")))?;
+        // Phải khai báo kích thước khung TRƯỚC khi ghi: thiếu bước này encoder
+        // báo "codec is in the wrong state" lúc Commit.
+        let (mut w, mut h) = (0u32, 0u32);
+        processor
+            .GetSize(&mut w, &mut h)
+            .map_err(|e| FsError::new("image_failed", format!("kích thước ảnh: {e}")))?;
+        encoder_frame
+            .SetSize(w, h)
+            .map_err(|e| FsError::new("image_failed", format!("đặt kích thước: {e}")))?;
+        encoder_frame
+            .WriteSource(&processor, std::ptr::null_mut())
+            .map_err(|e| FsError::new("image_failed", format!("ghi ảnh: {e}")))?;
+        // Khung phải được commit TRƯỚC encoder; thiếu bước này encoder báo
+        // "codec is in the wrong state".
+        encoder_frame
+            .Commit()
+            .map_err(|e| FsError::new("image_failed", format!("hoàn tất khung: {e}")))?;
+        encoder
+            .Commit()
+            .map_err(|e| FsError::new("image_failed", format!("hoàn tất: {e}")))?;
+
+        // Đọc kích thước bằng cách seek tới cuối rồi về đầu.
+        let mut size = 0u64;
+        out.Seek(0, windows::Win32::System::Com::STREAM_SEEK_END, Some(&mut size))
+            .map_err(|e| FsError::new("image_failed", format!("kích thước: {e}")))?;
+        out.Seek(0, windows::Win32::System::Com::STREAM_SEEK_SET, None)
+            .map_err(|e| FsError::new("image_failed", format!("về đầu: {e}")))?;
+        let mut buf = vec![0u8; size as usize];
+        let mut read = 0u32;
+        // `Read` trả HRESULT chứ không phải Result, nên kiểm tra bằng `ok()`.
+        out.Read(buf.as_mut_ptr() as *mut _, size as u32, Some(&mut read))
+            .ok()
+            .map_err(|e| FsError::new("image_failed", format!("đọc lại: {e}")))?;
+        buf.truncate(read as usize);
+        Ok(buf)
+    }
+}
+
+#[cfg(windows)]
+fn guid_for(ext: &str) -> windows::core::GUID {
+    use windows::Win32::Graphics::Imaging::{
+        GUID_ContainerFormatBmp, GUID_ContainerFormatGif, GUID_ContainerFormatJpeg,
+        GUID_ContainerFormatPng, GUID_ContainerFormatTiff,
+    };
+    match ext {
+        "jpg" | "jpeg" => GUID_ContainerFormatJpeg,
+        "gif" => GUID_ContainerFormatGif,
+        "tif" | "tiff" => GUID_ContainerFormatTiff,
+        "bmp" => GUID_ContainerFormatBmp,
+        _ => GUID_ContainerFormatPng,
+    }
+}
+
+#[cfg(not(windows))]
+fn rotate_bytes(_bytes: &[u8], _ext: &str) -> Result<Vec<u8>, FsError> {
+    Err(FsError::new("unsupported", "Xoay ảnh chỉ có trên Windows"))
+}

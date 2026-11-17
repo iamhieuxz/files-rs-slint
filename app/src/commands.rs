@@ -71,6 +71,7 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     }
     match id {
         "tag-clear" => set_tag_on_selection(ui, app, None),
+        "rotate-cw" => rotate_selection(ui, app),
         "pin-folder" => toggle_pin(ui, app),
         // Tìm đệ quy dùng chính nội dung ô lọc làm từ khoá.
         "search-recursive" => {
@@ -370,6 +371,7 @@ pub fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
 pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "new-folder", label: "Thư mục mới", icon: "folder", shortcut: "Ctrl+Shift+N" },
     PaletteCommand { id: "new-file", label: "Tệp mới", icon: "document", shortcut: "" },
+    PaletteCommand { id: "rotate-cw", label: "Xoay ảnh 90° phải", icon: "arrow_clockwise", shortcut: "" },
     PaletteCommand { id: "search-recursive", label: "Tìm trong thư mục con", icon: "search", shortcut: "Ctrl+Shift+F" },
     PaletteCommand { id: "pin-folder", label: "Ghim hoặc bỏ ghim thư mục", icon: "pin", shortcut: "" },
     PaletteCommand { id: "undo", label: "Hoàn tác", icon: "arrow_undo", shortcut: "Ctrl+Z" },
@@ -439,4 +441,40 @@ pub fn toggle_pin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     } else {
         "Đã bỏ ghim"
     }));
+}
+
+/// Xoay các ảnh đang chọn 90° sang phải.
+///
+/// Ghi đè lên tệp gốc nên không hoàn tác được — hộp thoại xác nhận nói rõ.
+pub fn rotate_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let paths: Vec<std::path::PathBuf> = app
+        .borrow()
+        .tab()
+        .selected_paths()
+        .into_iter()
+        .filter(|p| {
+            p.extension()
+                .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                .is_some_and(|e| {
+                    matches!(e.as_str(), "jpg" | "jpeg" | "png" | "bmp" | "gif" | "tif" | "tiff")
+                })
+        })
+        .collect();
+    if paths.is_empty() {
+        ui.set_status_tertiary(SharedString::from("Chọn ảnh (jpg, png, bmp, gif, tiff) để xoay"));
+        return;
+    }
+    ui.set_dialog_kind(SharedString::from("confirm-rotate"));
+    ui.set_dialog_title(SharedString::from("Xoay ảnh"));
+    ui.set_dialog_text(SharedString::from(
+        format!(
+            "Xoay {} ảnh 90° sang phải. Ảnh gốc bị ghi đè nên không hoàn tác được.",
+            paths.len()
+        )
+        .as_str(),
+    ));
+    ui.set_dialog_primary_label(SharedString::from("Xoay"));
+    ui.set_dialog_has_input(false);
+    ui.set_dialog_allows_empty(false);
+    ui.set_dialog_open(true);
 }

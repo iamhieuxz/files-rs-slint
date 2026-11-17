@@ -138,6 +138,14 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
         }
         "confirm-default" => register_association(ui),
         // Nút chính của hộp thoại trùng tên là "Giữ cả hai".
+        "confirm-rotate" => {
+            let paths = app.borrow().tab().selected_paths();
+            if !paths.is_empty() {
+                app.borrow().worker.submit(crate::ops_worker::Job::Rotate { paths });
+                ui.set_busy(true);
+                ui.set_busy_text(SharedString::from("Đang xoay ảnh…"));
+            }
+        }
         "paste-conflict" => {
             crate::file_ops::do_paste_with(ui, app, files_fs::ConflictPolicy::KeepBoth)
         }
