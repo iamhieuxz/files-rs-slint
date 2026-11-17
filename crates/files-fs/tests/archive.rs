@@ -74,7 +74,7 @@ fn zip_round_trips_a_tree() {
     std::fs::write(src.join("nested/b.txt"), b"beta").unwrap();
 
     let zip_path = dir.join("out.zip");
-    let count = archive::create_zip(&[src.clone()], &zip_path).unwrap();
+    let count = archive::create_zip(std::slice::from_ref(&src), &zip_path).unwrap();
     assert_eq!(count, 2, "two files were written");
 
     let out = dir.join("extracted");

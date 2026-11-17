@@ -134,7 +134,7 @@ fn deleting_to_the_recycle_bin_removes_the_entry() {
     let file = dir.join("trash-me.txt");
     std::fs::write(&file, b"x").unwrap();
 
-    let count = ops::delete_to_recycle_bin(&[file.clone()]).expect("shell delete");
+    let count = ops::delete_to_recycle_bin(std::slice::from_ref(&file)).expect("shell delete");
     assert_eq!(count, 1);
     assert!(!file.exists(), "the entry must leave its original location");
 

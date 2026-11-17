@@ -9,7 +9,7 @@ use files_core::sort::ListOptions;
 use files_core::{breadcrumbs, Entry, SortBy, SortDirection, SortSpec};
 use history::History;
 use ops_worker::{Job, JobDone, Worker};
-use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -304,7 +304,10 @@ fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         .map(|line| ModelRc::new(VecModel::from(line)))
         .collect();
 
-    ui.set_rows(ModelRc::new(VecModel::from(rows)));
+    // Giữ một `Rc<VecModel>` để `update_selection_flags` sửa được từng dòng
+    // tại chỗ, không phải thay cả model (xem ghi chú ở hàm đó).
+    let rows_model = Rc::new(VecModel::from(rows));
+    ui.set_rows(ModelRc::from(rows_model));
     ui.set_grid_rows(ModelRc::new(VecModel::from(grid_rows)));
     ui.set_address_text(SharedString::from(tab.current().to_string_lossy().as_ref()));
     ui.set_can_back(tab.history.can_back());
@@ -883,8 +886,13 @@ fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, mode
             }
         }
     }
-    push_view(ui, app);
+    // Cập nhật TẠI CHỖ, không dựng lại model: `push_view` thay cả `VecModel`,
+    // làm Slint phá và tạo lại mọi `TouchArea`. Khi đó cú click thứ hai rơi
+    // vào một phần tử mới nên `double-clicked` không bao giờ chạy — đó chính
+    // là lý do double-click không mở được thư mục/tệp.
+    update_selection_flags(ui, app);
     push_status(ui, app);
+
     // Preview follows the last clicked row.
     let entry = {
         let s = app.borrow();
@@ -898,6 +906,60 @@ fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, mode
         Some(e) => preview::show(ui, &e),
         None => preview::clear(ui),
     }
+}
+
+/// Flip the `selected` flag on the existing row models.
+///
+/// `set_row_data` mutates one row in place, so the `TouchArea` instances and
+/// their double-click state survive the click.
+fn update_selection_flags(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let a = app.borrow();
+    let tab = a.tab();
+    let rows = ui.get_rows();
+    for (visible_index, entry_index) in tab.visible.iter().enumerate() {
+        let selected = tab.selection.contains(entry_index);
+        if let Some(mut row) = rows.row_data(visible_index) {
+            if row.selected != selected {
+                row.selected = selected;
+                rows.set_row_data(visible_index, row);
+            }
+        }
+    }
+
+    // Grid là model lồng nhau: cập nhật từng hàng một.
+    let per_row = grid_columns(a.grid_width);
+    let grid = ui.get_grid_rows();
+    for (row_index, line) in tab.visible.chunks(per_row).enumerate() {
+        if let Some(line_model) = grid.row_data(row_index) {
+            if let Some(inner) = line_model.as_any().downcast_ref::<VecModel<FileRow>>() {
+                for (col, entry_index) in line.iter().enumerate() {
+                    let selected = tab.selection.contains(entry_index);
+                    if let Some(mut tile) = inner.row_data(col) {
+                        if tile.selected != selected {
+                            tile.selected = selected;
+                            inner.set_row_data(col, tile);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Nút "Giải nén" phụ thuộc lựa chọn hiện tại.
+    let is_archive = tab.selection.len() == 1
+        && tab
+            .selected_entries()
+            .first()
+            .and_then(|e| e.extension.as_deref())
+            .map(|x| x.eq_ignore_ascii_case("zip"))
+            .unwrap_or(false);
+    // `selection-count` điều khiển trạng thái bật/tắt của các nút trên command
+    // bar (Copy, Cut, Delete, Nén…). Quên cập nhật nó thì các nút đứng im ở
+    // trạng thái disable dù dòng đã được chọn.
+    let count = tab.selection.len() as i32;
+    drop(a);
+    ui.set_selection_count(count);
+    ui.set_selection_is_archive(is_archive);
 }
 
 fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
@@ -1156,7 +1218,7 @@ fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
 fn show_properties(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let s = app.borrow();
     let Some(entry) = s.tab().selected_entries().first().cloned() else { return };
-    preview::show(ui, &entry);
+    preview::show(ui, entry);
 }
 
 /// Compress the selection into `<name>.zip` in the current folder.

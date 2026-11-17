@@ -13,7 +13,7 @@ sysinfo = "0.37"
 md5 = "0.7"
 sha1 = "0.10"
 sha2 = "0.10"
-zip = { version = "7", default-features = false, features = ["deflate"] }
+zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
