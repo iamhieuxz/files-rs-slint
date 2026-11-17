@@ -785,27 +785,9 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let (w, a) = (ui.as_weak(), app.clone());
         ui.on_close_tab(move |i| {
             let Some(ui) = w.upgrade() else { return };
-            {
-                let mut s = a.borrow_mut();
-                if s.tabs.len() <= 1 {
-                    return;
-                }
-                let idx = i as usize;
-                if idx >= s.tabs.len() {
-                    return;
-                }
-                // Ghi nhớ để Ctrl+Shift+T mở lại được.
-                let closed = s.tabs[idx].current().to_path_buf();
-                s.tabs.remove(idx);
-                s.closed_tabs.push(closed);
-                if s.active >= s.tabs.len() {
-                    s.active = s.tabs.len() - 1;
-                } else if s.active > idx {
-                    s.active -= 1;
-                }
-            }
-            sync_tabs(&ui, &a.borrow());
-            reload(&ui, &a);
+            // Dùng chung một đường với menu chuột phải, để nút × và menu không
+            // bao giờ lệch hành vi.
+            close_tab_at(&ui, &a, (i >= 0).then_some(i as usize));
         });
     }
     {
@@ -890,6 +872,35 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let Some(ui) = w.upgrade() else { return };
             ui.set_menu_open(false);
             run_command(&ui, &a, id.as_str());
+        });
+    }
+    {
+        let w = ui.as_weak();
+        let a = app.clone();
+        ui.on_tab_context_menu(move |i, x, y| {
+            let Some(ui) = w.upgrade() else { return };
+            logging::write(&format!("menu tab: i={i} x={x} y={y}"));
+            let count = a.borrow().tabs.len();
+            let idx = i as usize;
+            if idx >= count {
+                return;
+            }
+            // Nhớ tab đang nhắm tới: các lệnh bên dưới đọc lại `menu-tab`.
+            ui.set_menu_tab(i);
+            let has_others = count > 1;
+            ui.set_menu_items(ModelRc::new(VecModel::from(vec![
+                menu("tab-duplicate", "Nhân bản tab", "window", "", true, false),
+                menu("", "", "", "", false, true),
+                menu("tab-close", "Đóng tab", "dismiss", "Ctrl+W", true, false),
+                menu("tab-close-others", "Đóng các tab khác", "dismiss", "", has_others, false),
+                menu("tab-close-right", "Đóng tab bên phải", "dismiss", "", idx + 1 < count, false),
+                menu("tab-close-left", "Đóng tab bên trái", "dismiss", "", idx > 0, false),
+                menu("", "", "", "", false, true),
+                menu("tab-close-all", "Đóng tất cả tab", "dismiss", "", true, false),
+            ])));
+            ui.set_menu_x(x);
+            ui.set_menu_y(y);
+            ui.set_menu_open(true);
         });
     }
     {
@@ -1305,10 +1316,27 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "duplicate-tab" => duplicate_tab(ui, app),
         "next-tab" => cycle_tab(ui, app, 1),
         "prev-tab" => cycle_tab(ui, app, -1),
-        "close-other-tabs" => close_other_tabs(ui, app),
-        "close-tabs-left" => close_tabs_side(ui, app, true),
-        "close-tabs-right" => close_tabs_side(ui, app, false),
-        "close-all-tabs" => close_all_tabs(ui, app),
+        "close-other-tabs" | "tab-close-others" => {
+            focus_menu_tab(ui, app);
+            close_other_tabs(ui, app)
+        }
+        "close-tabs-left" | "tab-close-left" => {
+            focus_menu_tab(ui, app);
+            close_tabs_side(ui, app, true)
+        }
+        "close-tabs-right" | "tab-close-right" => {
+            focus_menu_tab(ui, app);
+            close_tabs_side(ui, app, false)
+        }
+        "close-all-tabs" | "tab-close-all" => close_all_tabs(ui, app),
+        "tab-close" => {
+            let target = menu_tab(ui, app);
+            close_tab_at(ui, app, target)
+        }
+        "tab-duplicate" => {
+            focus_menu_tab(ui, app);
+            duplicate_tab(ui, app)
+        }
         _ => {}
     }
 }
@@ -1498,6 +1526,67 @@ fn duplicate_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
+}
+
+/// Tab the context menu points at, if it is still a valid index.
+fn menu_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Option<usize> {
+    let idx = ui.get_menu_tab();
+    let len = app.borrow().tabs.len();
+    (idx >= 0 && (idx as usize) < len).then_some(idx as usize)
+}
+
+/// Make the menu's tab the active one, so the "close others" family acts on it.
+fn focus_menu_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    if let Some(idx) = menu_tab(ui, app) {
+        app.borrow_mut().active = idx;
+    }
+}
+
+/// Close one tab by index, falling back to the active tab.
+///
+/// Mirrors what the × button does, so the menu and the button cannot drift
+/// apart: same bookkeeping for `closed_tabs`, same clamp of `active`.
+fn close_tab_at(ui: &AppWindow, app: &Rc<RefCell<App>>, target: Option<usize>) {
+    {
+        let mut s = app.borrow_mut();
+        let idx = target.unwrap_or(s.active);
+        let Some((_, new_active)) = close_index_result(s.tabs.len(), s.active, idx) else {
+            return;
+        };
+        // Ghi nhớ để Ctrl+Shift+T mở lại được.
+        let closed = s.tabs[idx].current().to_path_buf();
+        s.tabs.remove(idx);
+        s.closed_tabs.push(closed);
+        s.active = new_active;
+    }
+    sync_tabs(ui, &app.borrow());
+    reload(ui, app);
+}
+
+/// What (tab_count, active_index) becomes after closing tab `idx`.
+///
+/// `None` means the close must be ignored: the last tab stays, like Files and
+/// every browser, and an out-of-range index means a stale menu.
+///
+/// Kept pure so the index arithmetic — the part that silently mis-selects a tab
+/// — can be tested without a window.
+fn close_index_result(len: usize, active: usize, idx: usize) -> Option<(usize, usize)> {
+    if len <= 1 || idx >= len {
+        return None;
+    }
+    let new_len = len - 1;
+    let new_active = if active >= new_len {
+        // Đóng tab cuối đang mở: lùi về tab trước.
+        new_len - 1
+    } else if active > idx {
+        // Đóng tab bên trái tab đang mở: mọi thứ dịch sang trái một bậc.
+        active - 1
+    } else {
+        // Đóng tab bên phải (hoặc chính tab đang mở): vị trí giữ nguyên, và
+        // tab kế tiếp trượt vào chỗ đó.
+        active
+    };
+    Some((new_len, new_active))
 }
 
 /// Move `delta` tabs along, wrapping at both ends.
@@ -2117,6 +2206,60 @@ mod tests {
             "lệnh tạo bị chặn bởi icon: mất {elapsed:?}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn closing_a_tab_before_the_active_one_keeps_the_same_view() {
+        // [A][B][C], đang ở C (2), đóng B (1) -> vẫn là C, nay ở vị trí 1.
+        assert_eq!(close_index_result(3, 2, 1), Some((2, 1)));
+    }
+
+    #[test]
+    fn closing_the_active_last_tab_selects_the_new_last() {
+        // [A][B][C], đang ở C (2), đóng C -> về B ở vị trí 1.
+        assert_eq!(close_index_result(3, 2, 2), Some((2, 1)));
+    }
+
+    #[test]
+    fn closing_a_tab_after_the_active_one_keeps_the_index() {
+        // [A][B][C], đang ở A (0), đóng C (2) -> vẫn A ở 0.
+        assert_eq!(close_index_result(3, 0, 2), Some((2, 0)));
+    }
+
+    #[test]
+    fn closing_the_active_middle_tab_shows_the_next_one() {
+        // [A][B][C], đang ở B (1), đóng B -> tab sau trượt vào, vẫn vị trí 1.
+        assert_eq!(close_index_result(3, 1, 1), Some((2, 1)));
+    }
+
+    #[test]
+    fn the_last_tab_cannot_be_closed() {
+        // Đóng tab duy nhất phải bị bỏ qua, nếu không cửa sổ trắng.
+        assert_eq!(close_index_result(1, 0, 0), None);
+    }
+
+    #[test]
+    fn a_stale_menu_index_is_ignored() {
+        // Menu mở trên tab đã bị đóng ở nơi khác: không được panic.
+        assert_eq!(close_index_result(2, 0, 5), None);
+    }
+
+    #[test]
+    fn closing_never_leaves_the_active_index_out_of_range() {
+        // Quét mọi tổ hợp để chắc không có cửa sổ trắng hay chỉ số âm.
+        for len in 2..8usize {
+            for active in 0..len {
+                for idx in 0..len {
+                    let (new_len, new_active) =
+                        close_index_result(len, active, idx).expect("phải đóng được");
+                    assert_eq!(new_len, len - 1);
+                    assert!(
+                        new_active < new_len,
+                        "len={len} active={active} idx={idx} -> {new_active} ngoài {new_len}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

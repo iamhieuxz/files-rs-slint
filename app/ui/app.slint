@@ -183,6 +183,9 @@ export component AppWindow inherits Window {
     callback sidebar-activated(string);
     callback sidebar-toggled(string);
     callback row-context-menu(int, length, length);
+    // Menu chuột phải trên tab; `menu-tab` cho biết tab đang nhắm tới.
+    callback tab-context-menu(int, length, length);
+    in-out property <int> menu-tab: -1;
     callback background-context-menu(length, length);
     callback toggle-theme();
     // Command Palette
@@ -365,6 +368,7 @@ export component AppWindow inherits Window {
                     active: i == root.active-tab;
                     clicked => { root.select-tab(i); }
                     closed => { root.close-tab(i); }
+                    right-clicked => { root.tab-context-menu(i, self.absolute-position.x, self.absolute-position.y); }
                 }
                 Rectangle {
                     width: 32px;

@@ -231,6 +231,7 @@ export component TabItem inherits Rectangle {
     in property <bool> active: false;
     callback clicked();
     callback closed();
+    callback right-clicked();
 
     height: Theme.tab-height - 6px;
     min-width: 150px;
@@ -240,6 +241,29 @@ export component TabItem inherits Rectangle {
         : ta.has-hover ? Theme.subtle-hover
         : transparent;
     animate background { duration: 90ms; }
+
+    // Bề rộng vùng nút đóng, tính từ mép phải.
+    private property <length> close-zone: 24px;
+    // Con trỏ đang ở trên nút đóng (không phải chỉ trên tab).
+    private property <bool> over-close: ta.has-hover && ta.mouse-x > root.width - close-zone;
+
+    // MỘT vùng bấm duy nhất phủ cả tab, khai báo sau cùng nên nằm trên — cùng
+    // cách hàng tệp làm. Tự xác định vùng nút × theo toạ độ chuột thay vì
+    // chồng hai TouchArea, vì cách chồng đó không nhận được chuột phải.
+    ta := TouchArea {
+        clicked => {
+            if (root.over-close) { root.closed(); } else { root.clicked(); }
+        }
+        double-clicked => {
+            // Bấm nhanh ở vùng đóng thì đóng, đừng mở tab.
+            if (root.over-close) { root.closed(); } else { root.clicked(); }
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                root.right-clicked();
+            }
+        }
+    }
 
     HorizontalLayout {
         padding-left: Theme.s3;
@@ -261,38 +285,21 @@ export component TabItem inherits Rectangle {
             overflow: elide;
             horizontal-stretch: 1;
         }
-        // Nút đóng: bọc trong Rectangle riêng để TouchArea của nó nằm TRÊN
-        // touch area của tab. Thứ tự khai báo quyết định thứ tự nhận sự kiện,
-        // nên `ta` phải đứng trước khối này (xem cuối component).
+        // Chỉ là hình vẽ; vùng bấm do `ta` lo để không phải chồng TouchArea.
         Rectangle {
             width: 20px;
             height: 20px;
             border-radius: Theme.r-sm;
-            background: close-ta.has-hover ? Theme.subtle-pressed : transparent;
+            background: root.over-close ? Theme.subtle-pressed : transparent;
             FluentIcon {
                 name: "dismiss";
                 width: 12px;
                 height: 12px;
                 x: 4px;
                 y: 4px;
-                tint: close-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-            }
-            close-ta := TouchArea {
-                clicked => { root.closed(); }
-                // Nuốt luôn double-click để không mở nhầm tab khi bấm nhanh.
-                double-clicked => { root.closed(); }
+                tint: root.over-close ? Theme.text-primary : Theme.text-secondary;
             }
         }
-    }
-
-    // TouchArea của tab khai báo TRƯỚC nút đóng ở trên là không được: Slint
-    // xử lý theo thứ tự khai báo và phần tử sau nằm trên. Vì vậy vùng bấm của
-    // tab chỉ phủ phần chữ, nhường vùng phải cho nút đóng.
-    ta := TouchArea {
-        x: 0;
-        width: parent.width - 26px;
-        height: parent.height;
-        clicked => { root.clicked(); }
     }
 }
 
