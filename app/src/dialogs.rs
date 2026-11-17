@@ -8,7 +8,7 @@
 use crate::slint_generated::*;
 use crate::state::App;
 use crate::commands::{menu, register_association};
-use crate::{logging, ops_worker, preview};
+use crate::{format, logging, ops_worker, preview};
 use ops_worker::Job;
 use slint::{ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
@@ -138,6 +138,15 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
         }
         "confirm-default" => register_association(ui),
         // Nút chính của hộp thoại trùng tên là "Giữ cả hai".
+        "confirm-empty-bin" => {
+            match files_fs::empty_recycle_bin() {
+                Ok(()) => ui.set_status_tertiary(SharedString::from("Đã làm rỗng Thùng rác")),
+                Err(e) => {
+                    let text = format::explain_error(&e.code, &e.message);
+                    ui.set_error_text(SharedString::from(text.as_str()));
+                }
+            }
+        }
         "confirm-rotate" => {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {

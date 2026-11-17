@@ -12,6 +12,7 @@ pub mod gitstatus;
 pub mod listing;
 pub mod log;
 pub mod ops;
+pub mod recycle;
 pub mod search;
 pub mod shellicon;
 pub mod watch;
@@ -22,6 +23,10 @@ pub use drives::{list_drives, DriveInfo};
 pub use log::set_log_sink;
 pub use gitstatus::{repo_root, status_for, GitState, StatusMap};
 pub use listing::read_dir;
+pub use recycle::{
+    bin_path as recycle_bin_path, can_browse as can_browse_recycle_bin, can_restore,
+    empty as empty_recycle_bin, list as list_recycle_bin, RecycleItem,
+};
 pub use search::{search, SearchHit, SearchOptions};
 pub use shellicon::{shell_icon, thumbnail, wants_shell_icon, RgbaIcon};
 pub use ops::{

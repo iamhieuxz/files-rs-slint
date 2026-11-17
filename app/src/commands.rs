@@ -72,6 +72,7 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     match id {
         "tag-clear" => set_tag_on_selection(ui, app, None),
         "rotate-cw" => rotate_selection(ui, app),
+        "empty-recycle-bin" => ask_empty_recycle_bin(ui),
         "pin-folder" => toggle_pin(ui, app),
         // Tìm đệ quy dùng chính nội dung ô lọc làm từ khoá.
         "search-recursive" => {
@@ -371,6 +372,7 @@ pub fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
 pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "new-folder", label: "Thư mục mới", icon: "folder", shortcut: "Ctrl+Shift+N" },
     PaletteCommand { id: "new-file", label: "Tệp mới", icon: "document", shortcut: "" },
+    PaletteCommand { id: "empty-recycle-bin", label: "Làm rỗng Thùng rác", icon: "delete", shortcut: "" },
     PaletteCommand { id: "rotate-cw", label: "Xoay ảnh 90° phải", icon: "arrow_clockwise", shortcut: "" },
     PaletteCommand { id: "search-recursive", label: "Tìm trong thư mục con", icon: "search", shortcut: "Ctrl+Shift+F" },
     PaletteCommand { id: "pin-folder", label: "Ghim hoặc bỏ ghim thư mục", icon: "pin", shortcut: "" },
@@ -474,6 +476,19 @@ pub fn rotate_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         .as_str(),
     ));
     ui.set_dialog_primary_label(SharedString::from("Xoay"));
+    ui.set_dialog_has_input(false);
+    ui.set_dialog_allows_empty(false);
+    ui.set_dialog_open(true);
+}
+
+/// Hỏi trước khi làm rỗng Thùng rác — không hoàn tác được.
+pub fn ask_empty_recycle_bin(ui: &AppWindow) {
+    ui.set_dialog_kind(SharedString::from("confirm-empty-bin"));
+    ui.set_dialog_title(SharedString::from("Làm rỗng Thùng rác"));
+    ui.set_dialog_text(SharedString::from(
+        "Xoá vĩnh viễn mọi mục trong Thùng rác. Không thể hoàn tác.",
+    ));
+    ui.set_dialog_primary_label(SharedString::from("Làm rỗng"));
     ui.set_dialog_has_input(false);
     ui.set_dialog_allows_empty(false);
     ui.set_dialog_open(true);
