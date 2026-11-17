@@ -1,0 +1,45 @@
+name: CI
+
+# Ba thứ phải xanh trước khi merge: build, test, clippy. Không thêm bước nào
+# không kiểm chứng được điều gì — CI chậm là CI bị bỏ qua.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Cảnh báo của rustc là lỗi: đã giữ 0 cảnh báo suốt quá trình phát triển,
+  # và bước này giữ cho nó như vậy.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  windows:
+    name: Windows (build, test, clippy)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cài Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # Cache của cargo: build Slint khá nặng, cache giúp vòng lặp phản hồi ngắn.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (debug)
+        run: cargo build --workspace
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+
+      # Bản release là thứ người dùng thật chạy; build nó ở đây để lỗi chỉ xuất
+      # hiện khi tối ưu hoá bị bắt trước khi phát hành.
+      - name: Build (release)
+        run: cargo build --workspace --release

@@ -28,14 +28,14 @@ Tài liệu hiện có mâu thuẫn: PLAN.md liệt kê "Tags" ở mục chưa l
 
 Mục tiêu: có số liệu thật trước khi thay đổi mã.
 
-- [ ] **0.1** Chạy `cargo test --workspace` và ghi lại số test đạt/hỏng vào mục này.
+- [x] **0.1** Chạy `cargo test --workspace` và ghi lại số test đạt/hỏng vào mục này. Kết quả đo: **136 test pass, 0 hỏng** (workspace, gồm 23 test của `files-fs` lib + 13 `files-core` + các test tích hợp).
   - Tiêu chí: lệnh chạy xong, số liệu được ghi, sửa số trong PLAN nếu sai.
 - [x] **0.2** Chạy `cargo clippy --workspace --all-targets` và ghi số cảnh báo. (Kết quả: 0 cảnh báo, 0 lỗi, sau khi buộc compile lại.)
   - Tiêu chí: không có cảnh báo mới sau mỗi giai đoạn.
-- [ ] **0.3** Chạy `cargo build --release` và ghi kích thước `files-rs.exe`.
-- [ ] **0.4** Thêm CI (GitHub Actions, `windows-latest`) chạy build, test, clippy.
+- [x] **0.3** Chạy `cargo build --release` và ghi kích thước `files-rs.exe`. Kết quả: `target/release/files-rs.exe` **19,0 MB**, build 22,5 giây.
+- [x] **0.4** Thêm CI (GitHub Actions, `windows-latest`) chạy build, test, clippy. Đã thêm `.github/workflows/ci.yml`: build, test, clippy, build release; `RUSTFLAGS=-D warnings` để cảnh báo thành lỗi.
   - Tiêu chí: mỗi commit đều có kết quả xanh/đỏ.
-- [ ] **0.5** Chụp trạng thái hiện tại (light, dark, details, grid) để so sánh UI sau refactor.
+- [~] **0.5** Chụp trạng thái hiện tại (light, dark, details, grid) để so sánh UI sau refactor. **Một phần**: đã chụp `docs/screenshots/light-details.png` (80 KB) và `dark-details.png` (81 KB) bằng `PrintWindow` — xác nhận bằng màu nền: sáng R=251, tối R=39. Hai ảnh dạng lưới chưa chụp ổn định: `PrintWindow` với cửa sổ không khung của Slint trả khung hình cũ, còn chụp màn hình thật thì bị cửa sổ khác che. Cần chụp tay khi máy không dùng.
 
 ---
 
@@ -195,3 +195,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-17 | 0 (một phần) | Chạy `cargo test --workspace`: pass. Build release: pass. Hiệu chỉnh lại kế hoạch theo số liệu đo được: unwrap production 46 → 4; tính năng undo, thumbnail, sidebar pin, accessibility xác nhận chưa có |
 | 2026-11-17 | 3.1–3.4 | Hoàn thành giai đoạn 3. SAFETY **23/23** khối (window 3, assoc 4, ops 3, shellicon 13) — giữ từng khối tại chỗ. `window.rs` dùng hàm Win32 an toàn. Kiểm tra kết quả Win32 + ghi log qua `files_fs::set_log_sink` (thay `eprintln!` mất hút). Tách 5 hàm thuần dựng chuỗi trong `assoc.rs` với 8 test. Dọn code chết. Test 132/132 pass, clippy 0 cảnh báo. |
 | 2026-11-17 | 4.1–4.10 | Hoàn thành giai đoạn 4. `main.rs` 2408 → **240 dòng**; module lớn nhất `wiring.rs` 467 dòng. Mỗi bước một commit riêng, test và chạy app sau từng bước. Test 138/138 pass, clippy 0 cảnh báo. |
+| 2026-11-18 | 0.1, 0.3, 0.4, 0.5 | Đo lại: 136 test pass, release 19,0 MB. Thêm CI GitHub Actions. Chụp được 2/4 ảnh nền tảng; 2 ảnh lưới cần chụp tay. |
