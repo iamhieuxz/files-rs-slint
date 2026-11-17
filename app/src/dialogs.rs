@@ -7,10 +7,9 @@
 
 use crate::slint_generated::*;
 use crate::state::App;
-use crate::commands::register_association;
+use crate::commands::{menu, register_association};
 use crate::{logging, ops_worker, preview};
 use ops_worker::Job;
-use crate::menu;
 use slint::{ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::path::PathBuf;
