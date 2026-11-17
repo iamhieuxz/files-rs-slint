@@ -1,0 +1,183 @@
+//! Background work: directory listing and file operations.
+//!
+//! A filesystem call on the UI thread freezes the window for as long as the
+//! slowest volume takes to answer — a mapped network drive can take seconds.
+//! Every blocking call therefore runs on a worker thread and reports back over a
+//! channel that the UI drains on a timer.
+//!
+//! The queue is deliberately serial: file operations mutate shared state, and
+//! running two deletes at once makes the "which one failed" report meaningless.
+
+use files_core::sort::ListOptions;
+use files_core::{FsError, Listing, SortSpec};
+use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
+
+/// One unit of background work.
+pub enum Job {
+    /// Re-read a directory. `token` lets a stale reply be discarded when the
+    /// user has already navigated elsewhere.
+    Load {
+        path: PathBuf,
+        sort: SortSpec,
+        opts: ListOptions,
+        token: u64,
+    },
+    Copy {
+        sources: Vec<PathBuf>,
+        target: PathBuf,
+    },
+    Move {
+        sources: Vec<PathBuf>,
+        target: PathBuf,
+    },
+    Delete {
+        paths: Vec<PathBuf>,
+    },
+    CreateFolder {
+        parent: PathBuf,
+        name: String,
+    },
+    CreateFile {
+        parent: PathBuf,
+        name: String,
+    },
+    Rename {
+        from: PathBuf,
+        to: String,
+    },
+}
+
+/// Result of a job.
+pub enum JobDone {
+    Loaded {
+        token: u64,
+        path: PathBuf,
+        result: Result<Listing, FsError>,
+    },
+    /// `label` is what the status bar shows; `result` carries an error when the
+    /// whole batch failed.
+    OpDone {
+        label: String,
+        result: Result<(), FsError>,
+    },
+}
+
+pub struct Worker {
+    tx: Sender<Job>,
+}
+
+impl Worker {
+    /// Spawn the worker thread and return the handle plus the result channel.
+    pub fn spawn() -> (Self, Receiver<JobDone>) {
+        let (job_tx, job_rx) = channel::<Job>();
+        let (done_tx, done_rx) = channel::<JobDone>();
+
+        thread::Builder::new()
+            .name("files-worker".into())
+            .spawn(move || {
+                while let Ok(job) = job_rx.recv() {
+                    let done = run(job);
+                    // A closed channel means the UI is shutting down; stop.
+                    if done_tx.send(done).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn worker thread");
+
+        (Self { tx: job_tx }, done_rx)
+    }
+
+    pub fn submit(&self, job: Job) {
+        // A closed channel means the worker exited; the UI stays alive and the
+        // user can retry, so dropping the job is the least-bad option.
+        let _ = self.tx.send(job);
+    }
+}
+
+fn run(job: Job) -> JobDone {
+    match job {
+        Job::Load { path, sort, opts, token } => {
+            let result = files_fs::read_dir(&path, sort, opts);
+            JobDone::Loaded { token, path, result }
+        }
+        Job::Copy { sources, target } => {
+            let (done, err) = run_batch(&sources, |src| files_fs::copy_into(src, &target));
+            let label = match &err {
+                Some(e) => format!("Sao chép lỗi: {}", e.message),
+                None => format!("Đã sao chép {done}/{} mục", sources.len()),
+            };
+            JobDone::OpDone { label, result: err.map_or(Ok(()), Err) }
+        }
+        Job::Move { sources, target } => {
+            let (done, err) = run_batch(&sources, |src| files_fs::move_into(src, &target));
+            let label = match &err {
+                Some(e) => format!("Di chuyển lỗi: {}", e.message),
+                None => format!("Đã di chuyển {done}/{} mục", sources.len()),
+            };
+            JobDone::OpDone { label, result: err.map_or(Ok(()), Err) }
+        }
+        Job::Delete { paths } => {
+            let n = paths.len();
+            match files_fs::delete_to_recycle_bin(&paths) {
+                Ok(count) => JobDone::OpDone {
+                    label: format!("Đã chuyển {count}/{n} mục vào Thùng rác"),
+                    result: Ok(()),
+                },
+                Err(e) => JobDone::OpDone {
+                    label: format!("Xoá lỗi: {}", e.message),
+                    result: Err(e),
+                },
+            }
+        }
+        Job::CreateFolder { parent, name } => {
+            let (label, result) = match files_fs::create_folder(&parent, &name) {
+                Ok(p) => (format!("Đã tạo thư mục {}", file_label(&p)), Ok(())),
+                Err(e) => (format!("Tạo thư mục lỗi: {}", e.message), Err(e)),
+            };
+            JobDone::OpDone { label, result }
+        }
+        Job::CreateFile { parent, name } => {
+            let (label, result) = match files_fs::create_file(&parent, &name) {
+                Ok(p) => (format!("Đã tạo tệp {}", file_label(&p)), Ok(())),
+                Err(e) => (format!("Tạo tệp lỗi: {}", e.message), Err(e)),
+            };
+            JobDone::OpDone { label, result }
+        }
+        Job::Rename { from, to } => {
+            let (label, result) = match files_fs::rename(&from, &to) {
+                Ok(p) => (format!("Đã đổi tên thành {}", file_label(&p)), Ok(())),
+                Err(e) => (format!("Đổi tên lỗi: {}", e.message), Err(e)),
+            };
+            JobDone::OpDone { label, result }
+        }
+    }
+}
+
+/// Apply `op` to each source, counting successes and keeping the first error.
+fn run_batch<F>(sources: &[PathBuf], mut op: F) -> (usize, Option<FsError>)
+where
+    F: FnMut(&PathBuf) -> Result<PathBuf, FsError>,
+{
+    let mut done = 0usize;
+    let mut first_err = None;
+    for src in sources {
+        match op(src) {
+            Ok(_) => done += 1,
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+    (done, first_err)
+}
+
+fn file_label(p: &std::path::Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| p.display().to_string())
+}

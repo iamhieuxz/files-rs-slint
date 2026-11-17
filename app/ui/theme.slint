@@ -1,61 +1,102 @@
-// Design tokens. Mọi màu, khoảng cách, bo góc trong UI lấy từ đây.
-// Hướng: flat, tối, nhiều lớp alpha thay vì một màu đặc. Một accent duy nhất.
-// Lưu ý: Slint 1.19 trên Windows không bật cửa sổ trong suốt; "trong suốt" ở đây là lớp
-// nền có alpha thấp so với nền cửa sổ, không phải xuyên qua màn hình.
+// Fluent 2 design tokens.
+//
+// Nguồn: bảng màu WinUI 3 / Fluent 2 mà Files (files.community) dùng, đối chiếu
+// trực tiếp với `src/Files.App/App.xaml` trong repo files-community/Files.
+// Mọi màu, khoảng cách, bo góc trong UI phải lấy từ đây — không hardcode hex.
 
 export global Theme {
-    // Lớp nền (từ dưới lên): canvas < panel < card. Alpha để tạo cảm giác lớp mờ.
-    out property <color> canvas: #0b0c0eee;
-    out property <color> panel: #14161aaa;
-    out property <color> card: #1b1e23cc;
-    out property <color> hover: #ffffff12;
-    out property <color> pressed: #ffffff1f;
-    out property <color> selected: #3b82f630;
+    // Bật/tắt dark mode từ Rust: ui.global::<Theme>().set_dark(true).
+    in-out property <bool> dark: false;
 
-    // Viền
-    out property <color> border: #ffffff14;
-    out property <color> border-strong: #ffffff26;
+    // ---- Nền: dưới lên là base < layer < card ----
+    out property <color> solid-base: dark ? #202020 : #f3f3f3;
+    out property <color> solid-secondary: dark ? #1c1c1c : #eeeeee;
+    out property <color> solid-tertiary: dark ? #282828 : #f9f9f9;
+    out property <color> layer: dark ? #ffffff14 : #ffffff80;
+    out property <color> card: dark ? #ffffff0d : #ffffffb3;
+    out property <color> card-secondary: dark ? #ffffff08 : #f6f6f680;
 
-    // Chữ
-    out property <color> text-primary: #f3f4f6;
-    out property <color> text-secondary: #a3a9b3;
-    out property <color> text-muted: #6b7280;
+    // Vùng nội dung file: sáng hơn panel một chút để tách lớp.
+    out property <color> file-area: dark ? #272727 : #fbfbfb;
 
-    // Accent duy nhất
-    out property <color> accent: #3b82f6;
-    out property <color> danger: #f87171;
+    // ---- Fill trạng thái (SubtleFillColor*) ----
+    out property <color> subtle-hover: dark ? #ffffff0f : #00000009;
+    out property <color> subtle-pressed: dark ? #ffffff0a : #00000006;
+    out property <color> subtle-selected: dark ? #ffffff1a : #00000012;
 
-    // Màu theo loại tệp (flat, dùng cho icon)
-    out property <color> icon-folder: #facc15;
-    out property <color> icon-image: #34d399;
-    out property <color> icon-doc: #60a5fa;
-    out property <color> icon-code: #c084fc;
-    out property <color> icon-media: #fb923c;
-    out property <color> icon-archive: #f472b6;
-    out property <color> icon-file: #9ca3af;
+    // ---- Viền ----
+    out property <color> stroke: dark ? #ffffff18 : #0000000f;
+    out property <color> stroke-strong: dark ? #ffffff26 : #00000029;
+    out property <color> stroke-divider: dark ? #ffffff12 : #0000000f;
 
-    // Khoảng cách: bội số 4
+    // ---- Chữ ----
+    out property <color> text-primary: dark ? #ffffff : #1a1a1a;
+    out property <color> text-secondary: dark ? #ffffffc5 : #5d5d5d;
+    out property <color> text-tertiary: dark ? #ffffff87 : #868686;
+    out property <color> text-disabled: dark ? #ffffff5c : #b3b3b3;
+    out property <color> text-on-accent: dark ? #000000 : #ffffff;
+
+    // ---- Accent ----
+    out property <color> accent: dark ? #60cdff : #0070cb;
+    out property <color> accent-hover: dark ? #75d3ff : #0a7dd4;
+    out property <color> accent-pressed: dark ? #4fbde9 : #0062b3;
+    out property <color> accent-subtle: dark ? #60cdff1f : #0070cb1a;
+
+    // ---- Màu hệ thống (trạng thái) ----
+    out property <color> success: dark ? #6ccb5f : #0f7b0f;
+    out property <color> caution: dark ? #fce100 : #9d5d00;
+    out property <color> critical: dark ? #ff99a4 : #c42b1c;
+
+    // ---- Màu glyph cho mục sidebar (Files tô màu từng loại) ----
+    out property <color> glyph-home: #e8a33d;
+    out property <color> glyph-desktop: #2f86d4;
+    out property <color> glyph-downloads: #2aa36b;
+    out property <color> glyph-documents: #4a90d9;
+    out property <color> glyph-pictures: #3aa6a6;
+    out property <color> glyph-music: #d9534f;
+    out property <color> glyph-videos: #8b6bd9;
+    out property <color> glyph-drive: #6b7280;
+    out property <color> glyph-folder: #d8a838;
+    out property <color> glyph-file: #8a8f98;
+    out property <color> glyph-cloud: #3d7bd6;
+    out property <color> glyph-network: #4aa564;
+
+    // ---- Khoảng cách: thang 4 ----
     out property <length> s1: 4px;
     out property <length> s2: 8px;
     out property <length> s3: 12px;
     out property <length> s4: 16px;
+    out property <length> s5: 20px;
     out property <length> s6: 24px;
 
-    // Bo góc
-    out property <length> r-sm: 6px;
-    out property <length> r-md: 10px;
+    // ---- Bo góc ----
+    out property <length> r-xs: 3px;
+    out property <length> r-sm: 4px;
+    out property <length> r-md: 7px;
+    out property <length> r-lg: 8px;
 
-    // Kích thước cố định
-    out property <length> row-height: 32px;
+    // ---- Kích thước chrome (cố định, không co giãn theo nội dung) ----
     out property <length> tab-height: 36px;
-    out property <length> toolbar-height: 44px;
-    out property <length> header-height: 30px;
-    out property <length> status-height: 26px;
-    out property <length> sidebar-width: 220px;
-    out property <length> preview-min: 260px;
+    out property <length> commandbar-height: 44px;
+    out property <length> addressbar-height: 36px;
+    out property <length> header-height: 32px;
+    out property <length> row-height: 32px;
+    out property <length> grid-tile: 132px;
+    out property <length> status-height: 28px;
+    out property <length> sidebar-width: 232px;
+    out property <length> sidebar-collapsed: 0px;
+    out property <length> preview-width: 300px;
+    out property <length> control-height: 32px;
 
-    // Chữ
-    out property <length> font-body: 13px;
-    out property <length> font-meta: 12px;
-    out property <length> font-label: 11px;
+    // ---- Chữ ----
+    out property <length> font-caption: 12px;
+    out property <length> font-body: 14px;
+    out property <length> font-subtitle: 16px;
+    out property <length> font-title: 20px;
+    out property <int> weight-regular: 400;
+    out property <int> weight-medium: 500;
+    out property <int> weight-semibold: 600;
+
+    out property <string> font-family: "Segoe UI Variable Text";
+    out property <string> font-family-display: "Segoe UI Variable Display";
 }

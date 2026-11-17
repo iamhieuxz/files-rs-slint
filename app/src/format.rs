@@ -1,0 +1,208 @@
+//! Row and sidebar presentation: turning model values into the strings and
+//! glyph names the UI renders.
+//!
+//! Formatting lives here rather than in `main.rs` so the mapping is testable:
+//! "which icon does a `.pdf` get" is a rule, not a rendering detail.
+
+use files_core::{Entry, EntryKind};
+
+/// Fluent icon name + tint for one entry.
+///
+/// The colour groups match Files' `ThemedIcon` conventions: folders amber,
+/// documents blue, code purple, media orange, archives pink.
+pub fn icon_for(entry: &Entry) -> (&'static str, u32) {
+    if entry.is_dir() {
+        return ("folder", 0xd8a838);
+    }
+    let ext = entry.extension.as_deref().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" | "tif" | "tiff" => {
+            ("image", 0x34a853)
+        }
+        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "webm" | "flv" => ("video", 0xfb923c),
+        "mp3" | "wav" | "flac" | "m4a" | "ogg" | "aac" => ("music_note", 0xd9534f),
+        "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "iso" => ("folder_zip", 0xf472b6),
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "c" | "cpp" | "h" | "cs" | "go" | "java"
+        | "json" | "toml" | "yaml" | "yml" | "xml" | "html" | "css" | "sql" | "sh" | "ps1"
+        | "bat" => ("code", 0xc084fc),
+        "doc" | "docx" | "rtf" | "odt" => ("document", 0x4a90d9),
+        "xls" | "xlsx" | "csv" | "ods" => ("table", 0x2aa36b),
+        "ppt" | "pptx" | "odp" => ("slide_layout", 0xe0703d),
+        "pdf" => ("document", 0xd9534f),
+        "txt" | "md" | "log" => ("document", 0x8a8f98),
+        "exe" | "msi" | "dll" => ("window", 0x8a8f98),
+        _ => ("document", 0x8a8f98),
+    }
+}
+
+/// Human label for the "Loại" column.
+pub fn kind_label(entry: &Entry) -> String {
+    match entry.kind {
+        EntryKind::Directory => "Thư mục".into(),
+        EntryKind::Symlink => "Liên kết".into(),
+        EntryKind::Other => "Khác".into(),
+        EntryKind::File => match entry.extension.as_ref() {
+            Some(ext) => format!("Tệp {}", ext.to_uppercase()),
+            None => "Tệp".into(),
+        },
+    }
+}
+
+/// 1.4 KB / 27.3 MB / 1.20 GB, empty for directories.
+pub fn format_size(bytes: Option<u64>) -> String {
+    match bytes {
+        None => String::new(),
+        Some(b) if b < 1024 => format!("{b} B"),
+        Some(b) if b < 1024 * 1024 => format!("{:.1} KB", b as f64 / 1024.0),
+        Some(b) if b < 1024 * 1024 * 1024 => format!("{:.1} MB", b as f64 / 1024.0 / 1024.0),
+        Some(b) => format!("{:.2} GB", b as f64 / 1024.0 / 1024.0 / 1024.0),
+    }
+}
+
+/// `dd/MM/yyyy HH:mm` in local time; empty when the timestamp is unknown.
+pub fn format_time(ms: Option<i64>) -> String {
+    match ms.and_then(chrono::DateTime::from_timestamp_millis) {
+        Some(dt) => dt
+            .with_timezone(&chrono::Local)
+            .format("%d/%m/%Y %H:%M")
+            .to_string(),
+        None => String::new(),
+    }
+}
+
+/// Colour for a pinned folder in the sidebar, matched on the folder name.
+pub fn folder_glyph(name: &str) -> (&'static str, u32) {
+    match name {
+        "Home" => ("home", 0xe8a33d),
+        "Desktop" => ("desktop", 0x2f86d4),
+        "Downloads" => ("arrow_download", 0x2aa36b),
+        "Documents" => ("document", 0x4a90d9),
+        "Pictures" => ("image", 0x3aa6a6),
+        "Music" => ("music_note", 0xd9534f),
+        "Videos" => ("video", 0x8b6bd9),
+        _ => ("folder", 0xd8a838),
+    }
+}
+
+/// Natural width of each breadcrumb segment.
+///
+/// Slint cannot size a `Text` from its own content inside a layout, so the
+/// address bar asks for the widths up front: every segment gets a per-character
+/// estimate, clamped so a long folder name cannot swallow the bar.
+pub const CRUMB_PAD: f32 = 8.0;
+const CRUMB_CHAR: f32 = 7.4;
+const CRUMB_MIN: f32 = 28.0;
+const CRUMB_MAX: f32 = 220.0;
+
+pub fn layout_crumbs(labels: &[String]) -> Vec<f32> {
+    labels
+        .iter()
+        .map(|label| {
+            let text = label.chars().count() as f32 * CRUMB_CHAR;
+            (text + CRUMB_PAD * 2.0).clamp(CRUMB_MIN, CRUMB_MAX)
+        })
+        .collect()
+}
+
+/// The address bar as one line: `C:  ›  Users  ›  iamhieuxz`.
+///
+/// Slint cannot let children of a layout size themselves, so the breadcrumb is
+/// rendered as a single `Text` rather than one clickable chip per segment. The
+/// bar stays clickable as a whole to switch into path editing.
+pub fn crumb_line(labels: &[String]) -> String {
+    labels.join("  ›  ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(name: &str, ext: Option<&str>) -> Entry {
+        Entry {
+            name: name.into(),
+            path: format!("C:\\tmp\\{name}"),
+            kind: EntryKind::File,
+            size: Some(1),
+            modified_ms: None,
+            created_ms: None,
+            extension: ext.map(|e| e.to_string()),
+            is_hidden: false,
+            is_readonly: false,
+        }
+    }
+
+    #[test]
+    fn sizes_switch_units_at_the_right_boundaries() {
+        assert_eq!(format_size(Some(0)), "0 B");
+        assert_eq!(format_size(Some(1023)), "1023 B");
+        assert_eq!(format_size(Some(1024)), "1.0 KB");
+        assert_eq!(format_size(Some(1024 * 1024)), "1.0 MB");
+        assert_eq!(format_size(Some(1024 * 1024 * 1024)), "1.00 GB");
+        assert_eq!(format_size(None), "", "directories show no size");
+    }
+
+    #[test]
+    fn images_and_videos_get_distinct_icons() {
+        assert_eq!(icon_for(&file("a.png", Some("png"))).0, "image");
+        assert_eq!(icon_for(&file("a.mp4", Some("mp4"))).0, "video");
+        assert_eq!(icon_for(&file("a.rs", Some("rs"))).0, "code");
+        assert_eq!(icon_for(&file("a.zip", Some("zip"))).0, "folder_zip");
+        assert_eq!(icon_for(&file("a.unknownext", Some("unknownext"))).0, "document");
+    }
+
+    #[test]
+    fn kind_label_upper_cases_the_extension() {
+        assert_eq!(kind_label(&file("a.rs", Some("rs"))), "Tệp RS");
+        assert_eq!(kind_label(&file("noext", None)), "Tệp");
+    }
+
+    #[test]
+    fn an_unknown_timestamp_renders_empty_not_a_sentinel_date() {
+        assert_eq!(format_time(None), "");
+        // 1970-01-01 in local time is a real value and must still render.
+        assert!(!format_time(Some(0)).is_empty());
+    }
+
+    #[test]
+    fn pinned_folders_have_their_own_colours() {
+        assert_eq!(folder_glyph("Downloads").0, "arrow_download");
+        assert_eq!(folder_glyph("Something Else").0, "folder");
+    }
+
+    #[test]
+    fn every_crumb_gets_a_clickable_width() {
+        let labels: Vec<String> = ["C:", "Users", "iamhieuxz", "Documents"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let widths = layout_crumbs(&labels);
+        assert_eq!(widths.len(), 4);
+        // Wider names get more room, and the order is preserved.
+        assert!(widths[0] < widths[1], "`C:` is narrower than `Users`");
+        assert!(widths[1] < widths[3], "`Users` is narrower than `Documents`");
+    }
+
+    #[test]
+    fn a_very_long_name_is_clamped() {
+        let long = "a".repeat(500);
+        let widths = layout_crumbs(&[long]);
+        assert_eq!(widths[0], CRUMB_MAX, "long names must not swallow the bar");
+    }
+
+    #[test]
+    fn a_short_name_keeps_a_clickable_minimum() {
+        let widths = layout_crumbs(&["C:".to_string()]);
+        assert!(widths[0] >= CRUMB_MIN);
+    }
+
+    #[test]
+    fn the_crumb_line_separates_segments() {
+        let labels: Vec<String> = ["C:", "Users", "me"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(crumb_line(&labels), "C:  ›  Users  ›  me");
+    }
+
+    #[test]
+    fn an_empty_crumb_list_renders_nothing() {
+        assert_eq!(crumb_line(&[]), "");
+    }
+}

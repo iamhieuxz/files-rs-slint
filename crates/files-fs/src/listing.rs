@@ -113,9 +113,10 @@ pub fn read_dir(
 
         entries.push(Entry {
             path: item.path().to_string_lossy().into_owned(),
-            // A dotfile is the portable spelling of "hidden". The Win32 hidden
-            // attribute is not consulted here; see the gap note in the report.
-            is_hidden: name.starts_with('.'),
+            // Windows hides on the FILE_ATTRIBUTE_HIDDEN/SYSTEM bits, not on a
+            // leading dot. Dotfiles are still treated as hidden so the rule
+            // holds on the portable test path as well.
+            is_hidden: name.starts_with('.') || crate::ops::is_hidden_on_disk(&item.path()),
             is_readonly: readonly,
             extension,
             size,
