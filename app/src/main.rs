@@ -100,7 +100,7 @@ fn main() -> Result<(), slint::PlatformError> {
         undo: Default::default(),
     }));
 
-    build_sidebar(&ui);
+    build_sidebar(&ui, &app.borrow());
     // Áp giao diện đã lưu TRƯỚC khung hình đầu tiên, để không bị chớp sáng
     // rồi mới tối.
     apply_saved_ui(&ui, &app.borrow());

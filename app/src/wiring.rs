@@ -430,6 +430,11 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         ui.on_background_context_menu(move |x, y| {
             let Some(ui) = w.upgrade() else { return };
             let can_paste = !a.borrow().clipboard.is_empty();
+            let pinned_now = {
+                let a = a.borrow();
+                let here = a.tab().current().to_string_lossy().into_owned();
+                a.settings.pinned_folders.iter().any(|p| p == &here)
+            };
             let items = vec![
                 menu("new-folder", "Thư mục mới", "folder", "Ctrl+N", true, false),
                 menu("new-file", "Tệp mới", "document", "", true, false),
@@ -438,6 +443,15 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 menu("select-all", "Chọn tất cả", "checkmark", "Ctrl+A", true, false),
                 menu("", "", "", "", false, true),
                 menu("refresh", "Làm mới", "arrow_clockwise", "F5", true, false),
+                // Ghim thư mục đang mở; nhãn đổi theo trạng thái hiện tại.
+                menu(
+                    "pin-folder",
+                    if pinned_now { "Bỏ ghim thư mục này" } else { "Ghim vào thanh bên" },
+                    "pin",
+                    "",
+                    true,
+                    false,
+                ),
                 menu("open-terminal", "Mở Terminal tại đây", "code", "", true, false),
                 menu("", "", "", "", false, true),
                 menu("toggle-extensions", "Ẩn/hiện phần mở rộng", "document", "", true, false),

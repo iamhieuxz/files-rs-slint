@@ -540,12 +540,18 @@ export component AppWindow inherits Window {
                         // Một Text duy nhất: nằm trực tiếp trong layout nên tự nở
                         // theo nội dung. Nhiều Text rời sẽ bị layout ép cùng bề
                         // rộng và đè lên nhau.
+                        // Vùng rê chuột để hiện đường dẫn đầy đủ: breadcrumb bị
+                        // elide nên thư mục sâu không đọc hết được.
+                        crumb-hover := TouchArea {
+                            clicked => { }
+                        }
                         Text {
                             text: root.crumb-text;
                             color: Theme.text-primary;
                             font-size: Theme.font-body;
                             vertical-alignment: center;
                             overflow: elide;
+
                             horizontal-stretch: 1;
                         }
                     }

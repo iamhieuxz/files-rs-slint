@@ -24,6 +24,8 @@ pub struct Settings {
     pub show_hidden: bool,
     pub show_extensions: bool,
     pub folders_first: bool,
+    /// Thư mục người dùng ghim vào sidebar, theo thứ tự thêm.
+    pub pinned_folders: Vec<String>,
 }
 
 impl Default for Settings {
@@ -37,6 +39,7 @@ impl Default for Settings {
             show_hidden: false,
             show_extensions: true,
             folders_first: true,
+            pinned_folders: Vec::new(),
         }
     }
 }
@@ -133,10 +136,30 @@ mod tests {
             show_hidden: true,
             show_extensions: false,
             folders_first: false,
+            pinned_folders: vec![r"C:\Users\x\Documents".into()],
         };
         s.save(&path).expect("ghi được");
         assert_eq!(Settings::load(&path), s);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pinned_folders_survive_a_restart() {
+        // Ghim nam trong settings.json nen phai doc lai duoc.
+        let dir = scratch("settings-pins");
+        let path = dir.join("settings.json");
+        let mut s = Settings::default();
+        s.pinned_folders = vec![r"C:\A".into(), r"D:\B".into()];
+        s.save(&path).expect("ghi được");
+
+        let back = Settings::load(&path);
+        assert_eq!(back.pinned_folders, vec![r"C:\A".to_string(), r"D:\B".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fresh_install_has_no_pins() {
+        assert!(Settings::default().pinned_folders.is_empty());
     }
 
     #[test]

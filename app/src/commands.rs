@@ -71,6 +71,7 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     }
     match id {
         "tag-clear" => set_tag_on_selection(ui, app, None),
+        "pin-folder" => toggle_pin(ui, app),
         "undo" => undo_last(ui, app),
         "redo" => redo_last(ui, app),
         "refresh" => reload(ui, app),
@@ -364,6 +365,7 @@ pub fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
 pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "new-folder", label: "Thư mục mới", icon: "folder", shortcut: "Ctrl+Shift+N" },
     PaletteCommand { id: "new-file", label: "Tệp mới", icon: "document", shortcut: "" },
+    PaletteCommand { id: "pin-folder", label: "Ghim hoặc bỏ ghim thư mục", icon: "pin", shortcut: "" },
     PaletteCommand { id: "undo", label: "Hoàn tác", icon: "arrow_undo", shortcut: "Ctrl+Z" },
     PaletteCommand { id: "redo", label: "Làm lại", icon: "arrow_redo", shortcut: "Ctrl+Y" },
     PaletteCommand { id: "copy", label: "Sao chép", icon: "copy", shortcut: "Ctrl+C" },
@@ -401,3 +403,34 @@ pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "register-assoc", label: "Đặt làm trình duyệt tệp mặc định", icon: "link", shortcut: "" },
     PaletteCommand { id: "open-default-apps", label: "Mở Settings ứng dụng mặc định", icon: "settings", shortcut: "" },
 ];
+
+/// Ghim thư mục đang mở vào sidebar, hoặc bỏ ghim nếu đã có.
+///
+/// Ghim nằm trong `settings.json` nên sống qua lần khởi động sau; danh sách
+/// được ghi ngay để tắt app đột ngột không làm mất.
+pub fn toggle_pin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let current = app.borrow().tab().current().to_string_lossy().into_owned();
+    let now_pinned = {
+        let mut a = app.borrow_mut();
+        let list = &mut a.settings.pinned_folders;
+        match list.iter().position(|p| p == &current) {
+            Some(i) => {
+                list.remove(i);
+                false
+            }
+            None => {
+                list.push(current.clone());
+                true
+            }
+        }
+    };
+    // Ghi xuong dia truoc khi dung lai sidebar.
+    persist_ui(app);
+    let app_ref = app.borrow();
+    crate::navigation::build_sidebar(ui, &app_ref);
+    ui.set_status_tertiary(SharedString::from(if now_pinned {
+        "Đã ghim vào thanh bên"
+    } else {
+        "Đã bỏ ghim"
+    }));
+}

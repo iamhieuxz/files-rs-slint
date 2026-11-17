@@ -222,6 +222,8 @@ pub fn persist_ui(app: &std::rc::Rc<std::cell::RefCell<App>>) {
             show_hidden: a.show_hidden,
             show_extensions: a.show_extensions,
             folders_first: a.folders_first,
+            // Giữ danh sách ghim đã có: hàm này chỉ đồng bộ phần giao diện.
+            pinned_folders: a.settings.pinned_folders.clone(),
         };
         a.settings = s;
     }

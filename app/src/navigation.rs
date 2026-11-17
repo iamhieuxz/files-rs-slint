@@ -15,10 +15,17 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-pub fn build_sidebar(ui: &AppWindow) {
-    let pinned: Vec<NavEntry> = files_fs::drives::quick_access()
-        .into_iter()
-        .map(|(label, path)| {
+pub fn build_sidebar(ui: &AppWindow, app: &App) {
+    // Ghim của người dùng đứng trước: đó là thứ họ tự chọn, đáng thấy trước.
+    let mut pinned: Vec<NavEntry> = app
+        .settings
+        .pinned_folders
+        .iter()
+        .map(|path| {
+            let label = std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone());
             let (icon, glyph) = format::folder_glyph(&label);
             NavEntry {
                 id: SharedString::from(format!("pin:{path}").as_str()),
@@ -32,6 +39,19 @@ pub fn build_sidebar(ui: &AppWindow) {
             }
         })
         .collect();
+    pinned.extend(files_fs::drives::quick_access().into_iter().map(|(label, path)| {
+        let (icon, glyph) = format::folder_glyph(&label);
+        NavEntry {
+            id: SharedString::from(format!("pin:{path}").as_str()),
+            label: SharedString::from(label.as_str()),
+            path: SharedString::from(path.as_str()),
+            icon: SharedString::from(icon),
+            glyph: color_from_u32(glyph),
+            indent: 0,
+            expandable: false,
+            expanded: false,
+        }
+    }));
     ui.set_pinned(ModelRc::new(VecModel::from(pinned)));
 
     let drives: Vec<NavEntry> = files_fs::list_drives()
