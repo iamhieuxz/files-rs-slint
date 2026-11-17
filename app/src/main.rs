@@ -20,137 +20,19 @@ mod logging;
 mod ops_worker;
 mod preview;
 mod settings;
+mod state;
 mod tags;
 mod window;
 
-use files_core::sort::ListOptions;
-use files_core::{breadcrumbs, Entry, SortBy, SortDirection, SortSpec};
-use history::History;
+use files_core::{breadcrumbs, SortBy, SortDirection, SortSpec};
+use state::{apply_saved_ui, persist_ui, settings_path, tag_store_path, App, Tab};
 use ops_worker::{Job, JobDone, Worker};
 use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::mpsc::Receiver;
 use std::time::Duration;
-
-/// Everything one tab owns.
-struct Tab {
-    history: History,
-    entries: Vec<Entry>,
-    /// Indices into `entries` that are currently selected.
-    selection: Vec<usize>,
-    /// Last row clicked, so Shift+click can extend from it.
-    anchor: Option<usize>,
-    sort: SortSpec,
-    /// Text the user typed into the filter box, lowercased once.
-    filter: String,
-    /// Row indices after filtering; `entries` stays the source of truth.
-    visible: Vec<usize>,
-    /// Entries dropped by the hidden filter, reported in the status bar.
-    hidden_count: usize,
-}
-
-impl Tab {
-    fn new(start: PathBuf) -> Self {
-        Self {
-            history: History::new(start),
-            entries: Vec::new(),
-            selection: Vec::new(),
-            anchor: None,
-            sort: SortSpec::default(),
-            filter: String::new(),
-            visible: Vec::new(),
-            hidden_count: 0,
-        }
-    }
-
-    fn current(&self) -> &Path {
-        self.history.current()
-    }
-
-    /// Recompute `visible` from `entries` and the active filter.
-    fn rebuild_visible(&mut self) {
-        self.visible.clear();
-        if self.filter.is_empty() {
-            self.visible.extend(0..self.entries.len());
-        } else {
-            for (i, e) in self.entries.iter().enumerate() {
-                if e.name.to_lowercase().contains(&self.filter) {
-                    self.visible.push(i);
-                }
-            }
-        }
-        // Selection can only reference rows the user can see.
-        self.selection.retain(|i| self.visible.contains(i));
-    }
-
-    fn selected_entries(&self) -> Vec<&Entry> {
-        self.selection
-            .iter()
-            .filter_map(|i| self.entries.get(*i))
-            .collect()
-    }
-
-    fn selected_paths(&self) -> Vec<PathBuf> {
-        self.selected_entries()
-            .into_iter()
-            .map(|e| PathBuf::from(&e.path))
-            .collect()
-    }
-}
-
-struct App {
-    tabs: Vec<Tab>,
-    active: usize,
-    show_hidden: bool,
-    show_sidebar: bool,
-    show_preview: bool,
-    view_mode: i32,
-    dark: bool,
-    clipboard: Vec<PathBuf>,
-    clipboard_cut: bool,
-    /// Bumped on every navigation so a stale listing reply is ignored.
-    load_token: u64,
-    /// True while a directory read is in flight, so the watcher cannot stack
-    /// another reload on top of it.
-    load_in_flight: bool,
-    /// Width available to the file list, so the grid can pick a column count.
-    grid_width: f32,
-    worker: Worker,
-    results: Receiver<JobDone>,
-    /// Paths whose change should trigger a refresh, from the directory watcher.
-    watch: Option<files_fs::WatchHandle>,
-    watched_path: Option<PathBuf>,
-    /// Tabs the user closed, newest last. `Ctrl+Shift+T` pops from here, which
-    /// is what Files and every browser do — the path alone is enough to restore.
-    closed_tabs: Vec<PathBuf>,
-    /// Hide `.txt`-style extensions in the name column.
-    show_extensions: bool,
-    /// Group folders above files, or sort them together.
-    folders_first: bool,
-    /// Thẻ màu của tệp và thư mục, cùng nơi lưu để ghi lại khi thay đổi.
-    tags: tags::TagStore,
-    tag_path: PathBuf,
-    /// Giao diện đang dùng, ghi lại sau mỗi thay đổi để lần sau mở đúng như cũ.
-    settings: settings::Settings,
-    settings_path: PathBuf,
-}
-
-impl App {
-    fn tab(&self) -> &Tab {
-        &self.tabs[self.active]
-    }
-
-    fn tab_mut(&mut self) -> &mut Tab {
-        &mut self.tabs[self.active]
-    }
-
-    fn list_options(&self) -> ListOptions {
-        ListOptions { show_hidden: self.show_hidden, show_dotfiles: self.show_hidden }
-    }
-}
 
 fn main() -> Result<(), slint::PlatformError> {
     // Không có console nên stderr mất hút; ghi log ra tệp để còn chẩn đoán.
@@ -223,97 +105,6 @@ fn main() -> Result<(), slint::PlatformError> {
     window::install_state_poller(&ui);
 
     ui.run()
-}
-
-/// Where the tag database lives.
-///
-/// `%LOCALAPPDATA%` is the right home, but a confined profile can refuse writes;
-/// in that case the store sits beside the executable, the same fallback the
-/// logger uses, so tagging still works instead of silently doing nothing.
-fn tag_store_path() -> PathBuf {
-    let preferred = tags::TagStore::default_path();
-    if let Some(dir) = preferred.parent() {
-        if std::fs::create_dir_all(dir).is_ok()
-            && std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&preferred)
-                .is_ok()
-        {
-            return preferred;
-        }
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .map(|d| d.join("files-rs-tags.json"))
-        .unwrap_or(preferred)
-}
-
-/// Push the stored preferences into the UI.
-fn apply_saved_ui(ui: &AppWindow, app: &App) {
-    refresh_theme(ui, app.dark);
-    ui.set_view_mode(app.view_mode);
-    ui.set_show_sidebar(app.show_sidebar);
-    ui.set_show_preview(app.show_preview);
-    ui.set_show_hidden(app.show_hidden);
-    ui.set_folders_first(app.folders_first);
-}
-
-/// Where preferences live: beside the tag database.
-///
-/// Same fallback rule as the log and the tags: a confined profile falls back to
-/// the folder holding the executable so settings still persist.
-fn settings_path() -> PathBuf {
-    let preferred = settings::Settings::default_path();
-    if let Some(dir) = preferred.parent() {
-        if std::fs::create_dir_all(dir).is_ok()
-            && std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&preferred)
-                .is_ok()
-        {
-            return preferred;
-        }
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .map(|d| d.join("files-rs-settings.json"))
-        .unwrap_or(preferred)
-}
-
-/// Write the current preferences to disk.
-///
-/// Called after every change; a failed write is logged but never blocks the UI —
-/// losing a preference is annoying, crashing on it is worse.
-fn save_settings(app: &Rc<RefCell<App>>) {
-    let (path, snapshot) = {
-        let a = app.borrow();
-        (a.settings_path.clone(), a.settings.clone())
-    };
-    if let Err(e) = snapshot.save(&path) {
-        logging::write(&format!("không lưu được giao diện: {e}"));
-    }
-}
-
-/// Copy the live `App` fields into the settings snapshot, then save.
-fn persist_ui(app: &Rc<RefCell<App>>) {
-    {
-        let mut a = app.borrow_mut();
-        let s = settings::Settings {
-            dark: a.dark,
-            view_mode: a.view_mode,
-            show_sidebar: a.show_sidebar,
-            show_preview: a.show_preview,
-            show_hidden: a.show_hidden,
-            show_extensions: a.show_extensions,
-            folders_first: a.folders_first,
-        };
-        a.settings = s;
-    }
-    save_settings(app);
 }
 
 // ---------------------------------------------------------------- sidebar
