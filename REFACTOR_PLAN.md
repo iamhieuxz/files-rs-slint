@@ -153,7 +153,7 @@ Hiện trạng: chỉ có kéo cửa sổ (`window.rs`, `window-drag`). Chưa c�
 
 Sắp xếp theo giá trị với người dùng và độ phức tạp tăng dần.
 
-- [ ] **6.1** Thumbnail ảnh trong danh sách, có cache trên đĩa, tạo ở luồng nền, giới hạn kích thước cache. (Đã kiểm chứng: không có từ khoá `thumbnail` trong mã.)
+- [x] **6.1** Thumbnail ảnh trong danh sách, có cache trên đĩa, tạo ở luồng nền, giới hạn kích thước cache. (Đã kiểm chứng: không có từ khoá `thumbnail` trong mã.) (`files-fs::thumbnail` qua WIC, giữ tỉ lệ, cạnh dài 48 px trong danh sách. Chỉ tệp ảnh được hỏi (một thư mục 5000 tệp văn bản không sinh 5000 lời gọi). Chạy ở luồng nền, kết quả điền vào ô icon. **Kiểm chứng**: 200×100 → 48×24, 100×200 → 24×48, tệp .txt → không có ảnh thu nhỏ. 3 test.)
 - [x] **6.2** Tìm kiếm trong thư mục hiện tại (không đệ quy), đã có lọc nhanh. Thêm tuỳ chọn tìm đệ quy có giới hạn độ sâu và có thể huỷ. (Tìm đệ quy `files-fs::search`: giới hạn độ sâu (8) và số kết quả (500), huỷ được, **không đi vào junction/symlink** (tránh vòng lặp vô hạn), bỏ qua thư mục không đọc được thay vì dừng. Ctrl+Shift+F. 7 test.)
 - [x] **6.3** Hiển thị đường dẫn đầy đủ khi rê chuột lên breadcrumb. (Tooltip đường dẫn đầy đủ khi rê chuột lên breadcrumb. Slint 1.19 **không export `TooltipArea`** nên phải tự vẽ lớp phủ (kiểm tra: `std-widgets.slint` báo 'No exported type called TooltipArea').)
 - [x] **6.4** Ghim thư mục vào sidebar (lưu trong settings). Lưu ý: từ "pin" trong mã chủ yếu là các mục `pin:` của Command Palette và màu thẻ, chưa có ghim sidebar thật. (Ghim thư mục vào sidebar: `settings.pinned_folders` (lưu bền), mục menu đổi nhãn theo trạng thái, có trong Command Palette. Ghim của người dùng đứng trước mục mặc định. 2 test.)
@@ -201,3 +201,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-18 | 5.4, 5.5 | Accessibility: 5 widget có role+label, 18/18 nút có nhãn tiếng Việt, **kiểm chứng bằng Windows UI Automation** (29 nút đọc đúng tên). Tương phản đo bằng WCAG, sửa `text-tertiary` light 3.28 → 4.53. Thông báo tự ẩn sau 4 s; trạng thái rỗng; gợi ý Run as administrator. 5.3 kéo-thả **chưa làm** theo yêu cầu. |
 | 2026-11-18 | 6.3, 6.4, 6.2 | Tooltip breadcrumb (tự vẽ vì Slint 1.19 không có TooltipArea). Ghim sidebar lưu trong settings. Tìm đệ quy có giới hạn, huỷ được, tránh junction. 9 test mới. |
 | 2026-11-18 | 6.5, 6.6 | Xoay ảnh qua WIC (kiểm chứng 4×2 → 2×4). Đọc đích shortcut qua IShellLinkW (kiểm chứng với .lnk thật). 4 test mới. |
+| 2026-11-18 | 6.1 | Thumbnail ảnh qua WIC, giữ tỉ lệ, chỉ hỏi tệp ảnh. 3 test. |
