@@ -71,6 +71,12 @@ pub enum Job {
     FolderSize {
         path: PathBuf,
     },
+    /// Tạo ảnh thu nhỏ cho một tệp ảnh.
+    Thumbnail {
+        path: PathBuf,
+        size: u32,
+        token: u64,
+    },
     /// Xoay ảnh 90° và ghi đè.
     Rotate {
         paths: Vec<PathBuf>,
@@ -109,6 +115,12 @@ pub enum JobDone {
     FolderSize {
         path: PathBuf,
         bytes: u64,
+        token: u64,
+    },
+    /// Ảnh thu nhỏ đã giải mã.
+    Thumbnail {
+        path: PathBuf,
+        image: files_fs::RgbaIcon,
         token: u64,
     },
     /// Kết quả tìm kiếm đệ quy.
@@ -416,6 +428,17 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 Err(e) => (format!("Tính mã băm lỗi: {}", e.message), Err(e)),
             };
             JobDone::OpDone { label, result, undo: None }
+        }
+        Job::Thumbnail { path, size, token } => {
+            match files_fs::thumbnail(&path, size) {
+                Ok(Some(image)) => JobDone::Thumbnail { path, image, token },
+                // Không có ảnh thu nhỏ không phải lỗi: dòng giữ icon loại tệp.
+                Ok(None) | Err(_) => JobDone::OpDone {
+                    label: String::new(),
+                    result: Ok(()),
+                    undo: None,
+                },
+            }
         }
         Job::Rotate { paths } => {
             progress.begin(paths.len());

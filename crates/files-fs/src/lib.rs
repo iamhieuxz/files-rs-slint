@@ -21,7 +21,7 @@ pub use drives::{list_drives, DriveInfo};
 pub use log::set_log_sink;
 pub use listing::read_dir;
 pub use search::{search, SearchHit, SearchOptions};
-pub use shellicon::{shell_icon, wants_shell_icon, RgbaIcon};
+pub use shellicon::{shell_icon, thumbnail, wants_shell_icon, RgbaIcon};
 pub use ops::{
     copy_into, copy_into_with, copy_text_to_clipboard, create_file, create_folder, ConflictPolicy,
     delete_permanently,

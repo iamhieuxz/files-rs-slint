@@ -288,6 +288,39 @@ pub fn refresh_theme(ui: &AppWindow, dark: bool) {
 
 // ---------------------------------------------------------------- callbacks
 
+/// Hỏi ảnh thu nhỏ cho các tệp ảnh đang hiển thị.
+///
+/// Chỉ ảnh mới được hỏi: giải mã một tệp văn bản để tìm ảnh thu nhỏ là lãng phí,
+/// và với một thư mục 5000 tệp thì đó là hàng nghìn lời gọi vô ích.
+pub fn queue_thumbnails(app: &Rc<RefCell<App>>) {
+    let (paths, token) = {
+        let s = app.borrow();
+        let tab = s.tab();
+        let paths: Vec<std::path::PathBuf> = tab
+            .entries
+            .iter()
+            .filter(|e| {
+                e.extension
+                    .as_deref()
+                    .map(|x| x.to_ascii_lowercase())
+                    .is_some_and(|x| {
+                        matches!(
+                            x.as_str(),
+                            "jpg" | "jpeg" | "png" | "bmp" | "gif" | "tif" | "tiff" | "webp" | "ico"
+                        )
+                    })
+            })
+            .map(|e| std::path::PathBuf::from(&e.path))
+            .collect();
+        (paths, s.load_token)
+    };
+    let worker = &app.borrow().worker;
+    for path in paths {
+        worker.submit(crate::ops_worker::Job::Thumbnail { path, size: 48, token });
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

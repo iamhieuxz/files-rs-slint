@@ -6,7 +6,10 @@
 
 use crate::slint_generated::*;
 use crate::state::App;
-use crate::view::{color_from_u32, push_status, push_view, queue_folder_sizes, queue_shell_icons};
+use crate::view::{
+    color_from_u32, push_status, push_view, queue_folder_sizes, queue_shell_icons,
+    queue_thumbnails,
+};
 use crate::{format, logging, ops_worker, preview};
 use ops_worker::Job;
 use crate::tabs::sync_tabs;
@@ -142,6 +145,7 @@ pub fn apply_listing(ui: &AppWindow, app: &Rc<RefCell<App>>, listing: files_core
     // Icon thật của Windows cho exe/msi/lnk… — chạy sau khi bảng đã hiện để
     // không làm chậm lần vẽ đầu.
     queue_shell_icons(app);
+    queue_thumbnails(app);
 
     // Bảng thuộc tính của mục đầu tiên: bỏ trống thì panel trông như hỏng.
     let first = {

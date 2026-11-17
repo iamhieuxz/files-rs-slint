@@ -197,6 +197,13 @@ pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                         ));
                     }
                 }
+                Ok(JobDone::Thumbnail { path, image, token }) => {
+                    if token != a.borrow().load_token {
+                        continue;
+                    }
+                    // Dùng lại đường đi của icon: cùng một ô, cùng cách cập nhật.
+                    apply_shell_icon(&ui, &a, &path, to_slint_image(&image));
+                }
                 Ok(JobDone::SearchDone { token, root, hits, cancelled }) => {
                     // Bỏ kết quả của lần tìm trước khi người dùng đã đổi thư mục.
                     if token != a.borrow().load_token {

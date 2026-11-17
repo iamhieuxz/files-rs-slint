@@ -283,6 +283,113 @@ pub fn cache_key(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Ảnh thu nhỏ của một tệp ảnh, cạnh dài nhất là `size` điểm ảnh.
+///
+/// Dùng WIC để giải mã và thu nhỏ: nó xử lý đúng mọi định dạng mà Windows đọc
+/// được, và tự làm phần nội suy. Trả `None` cho tệp không phải ảnh hoặc ảnh
+/// hỏng — đó là chuyện thường gặp và không phải lỗi.
+#[cfg(windows)]
+pub fn thumbnail(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsError> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Imaging::{
+        CLSID_WICImagingFactory, IWICImagingFactory, WICBitmapInterpolationModeFant,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    };
+
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    // Chỉ những định dạng này mới đáng giải mã; tệp văn bản thì không.
+    if !matches!(
+        ext.as_str(),
+        "jpg" | "jpeg" | "png" | "bmp" | "gif" | "tif" | "tiff" | "webp" | "ico"
+    ) {
+        return Ok(None);
+    }
+
+    // SAFETY: `None` hợp lệ cho tham số reserved của CoInitializeEx.
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+
+    // SAFETY: mọi lời gọi COM đều kiểm tra kết quả; buffer sống đủ lâu.
+    unsafe {
+        let factory: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| FsError::new("thumb_failed", format!("WIC: {e}")))?;
+
+        let decoder = match factory.CreateDecoderFromFilename(
+            PCWSTR(wide.as_ptr()),
+            None,
+            windows::Win32::Foundation::GENERIC_READ,
+            Default::default(),
+        ) {
+            Ok(d) => d,
+            // Ảnh hỏng hoặc không đọc được: không phải lỗi của app.
+            Err(_) => return Ok(None),
+        };
+        let frame = match decoder.GetFrame(0) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+
+        // Giữ tỉ lệ: tính cạnh còn lại từ cạnh dài nhất.
+        let (mut w, mut h) = (0u32, 0u32);
+        frame
+            .GetSize(&mut w, &mut h)
+            .map_err(|e| FsError::new("thumb_failed", format!("kích thước: {e}")))?;
+        if w == 0 || h == 0 {
+            return Ok(None);
+        }
+        let (tw, th) = if w >= h {
+            (size, ((h as f32 / w as f32) * size as f32).max(1.0) as u32)
+        } else {
+            (((w as f32 / h as f32) * size as f32).max(1.0) as u32, size)
+        };
+
+        let scaler = factory
+            .CreateBitmapScaler()
+            .map_err(|e| FsError::new("thumb_failed", format!("tạo bộ thu nhỏ: {e}")))?;
+        scaler
+            .Initialize(&frame, tw, th, WICBitmapInterpolationModeFant)
+            .map_err(|e| FsError::new("thumb_failed", format!("thu nhỏ: {e}")))?;
+
+        // Đọc pixel ra RGBA.
+        let converter = factory
+            .CreateFormatConverter()
+            .map_err(|e| FsError::new("thumb_failed", format!("tạo bộ đổi màu: {e}")))?;
+        converter
+            .Initialize(
+                &scaler,
+                &windows::Win32::Graphics::Imaging::GUID_WICPixelFormat32bppRGBA,
+                windows::Win32::Graphics::Imaging::WICBitmapDitherTypeNone,
+                None,
+                0.0,
+                windows::Win32::Graphics::Imaging::WICBitmapPaletteTypeCustom,
+            )
+            .map_err(|e| FsError::new("thumb_failed", format!("đổi màu: {e}")))?;
+
+        let stride = tw * 4;
+        let mut buf = vec![0u8; (stride * th) as usize];
+        converter
+            .CopyPixels(std::ptr::null(), stride, &mut buf)
+            .map_err(|e| FsError::new("thumb_failed", format!("đọc điểm ảnh: {e}")))?;
+
+        Ok(Some(RgbaIcon { width: tw, height: th, pixels: buf }))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn thumbnail(_path: &Path, _size: u32) -> Result<Option<RgbaIcon>, FsError> {
+    Ok(None)
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

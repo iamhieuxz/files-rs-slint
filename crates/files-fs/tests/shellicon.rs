@@ -104,3 +104,84 @@ fn only_icon_worthy_extensions_are_requested() {
     assert!(files_fs::wants_shell_icon(Path::new("a.exe")));
     assert!(!files_fs::wants_shell_icon(Path::new("a.rs")));
 }
+
+#[test]
+fn a_wide_image_is_scaled_keeping_its_aspect_ratio() {
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("thumb-wide");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let img = root.join("rong.png");
+    let script = format!(
+        "Add-Type -AssemblyName System.Drawing; \
+         $b = New-Object System.Drawing.Bitmap 200,100; \
+         $g = [System.Drawing.Graphics]::FromImage($b); \
+         $g.Clear([System.Drawing.Color]::Blue); \
+         $b.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); \
+         $g.Dispose(); $b.Dispose()",
+        img.display()
+    );
+    let ok = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok || !img.exists() {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let thumb = files_fs::thumbnail(&img, 48)
+        .expect("không lỗi")
+        .expect("phải có ảnh thu nhỏ");
+
+    assert_eq!(thumb.width, 48, "cạnh dài bằng size yêu cầu");
+    assert_eq!(thumb.height, 24, "giữ tỉ lệ 2:1");
+    assert_eq!(thumb.pixels.len(), (48 * 24 * 4) as usize);
+    // Ảnh màu xanh đặc: phải có pixel hiển thị được.
+    let opaque = thumb.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
+    assert!(opaque > 0, "ảnh thu nhỏ không được rỗng");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_tall_image_is_scaled_by_its_height() {
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("thumb-tall");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let img = root.join("cao.png");
+    let script = format!(
+        "Add-Type -AssemblyName System.Drawing; \
+         $b = New-Object System.Drawing.Bitmap 100,200; \
+         $g = [System.Drawing.Graphics]::FromImage($b); \
+         $g.Clear([System.Drawing.Color]::Green); \
+         $b.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); \
+         $g.Dispose(); $b.Dispose()",
+        img.display()
+    );
+    let ok = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok || !img.exists() {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let thumb = files_fs::thumbnail(&img, 48).unwrap().expect("có ảnh");
+    assert_eq!(thumb.height, 48);
+    assert_eq!(thumb.width, 24);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_non_image_file_has_no_thumbnail() {
+    // Không được giải mã tệp văn bản để tìm ảnh thu nhỏ.
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("thumb-txt");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let f = root.join("a.txt");
+    std::fs::write(&f, b"x").unwrap();
+    assert!(files_fs::thumbnail(&f, 48).unwrap().is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}

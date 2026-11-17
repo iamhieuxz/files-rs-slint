@@ -157,8 +157,8 @@ Sắp xếp theo giá trị với người dùng và độ phức tạp tăng d�
 - [x] **6.2** Tìm kiếm trong thư mục hiện tại (không đệ quy), đã có lọc nhanh. Thêm tuỳ chọn tìm đệ quy có giới hạn độ sâu và có thể huỷ. (Tìm đệ quy `files-fs::search`: giới hạn độ sâu (8) và số kết quả (500), huỷ được, **không đi vào junction/symlink** (tránh vòng lặp vô hạn), bỏ qua thư mục không đọc được thay vì dừng. Ctrl+Shift+F. 7 test.)
 - [x] **6.3** Hiển thị đường dẫn đầy đủ khi rê chuột lên breadcrumb. (Tooltip đường dẫn đầy đủ khi rê chuột lên breadcrumb. Slint 1.19 **không export `TooltipArea`** nên phải tự vẽ lớp phủ (kiểm tra: `std-widgets.slint` báo 'No exported type called TooltipArea').)
 - [x] **6.4** Ghim thư mục vào sidebar (lưu trong settings). Lưu ý: từ "pin" trong mã chủ yếu là các mục `pin:` của Command Palette và màu thẻ, chưa có ghim sidebar thật. (Ghim thư mục vào sidebar: `settings.pinned_folders` (lưu bền), mục menu đổi nhãn theo trạng thái, có trong Command Palette. Ghim của người dùng đứng trước mục mặc định. 2 test.)
-- [ ] **6.5** Xoay ảnh (90°, lưu lại).
-- [ ] **6.6** Mở tệp `.lnk` và hiển thị đích của shortcut.
+- [x] **6.5** Xoay ảnh (90°, lưu lại). (`files-fs::rotate_image_clockwise` qua WIC (JPEG/PNG/BMP/GIF/TIFF). Ghi ra tệp tạm rồi `rename` để không bao giờ để lại tệp dở. Có hộp thoại xác nhận vì ghi đè tệp gốc. **Đã kiểm chứng**: PNG 4×2 xoay thành 2×4. Ba lỗi WIC thật đã gặp và sửa: `IWICStream` chưa khởi tạo (dùng `SHCreateMemStream`), thiếu `SetSize` trên khung, và phải `Commit` khung trước encoder.)
+- [x] **6.6** Mở tệp `.lnk` và hiển thị đích của shortcut. (`files-fs::shortcut_target` đọc đích qua `IShellLinkW` + `IPersistFile`. Hiện trong bảng thuộc tính với nhãn 'Trỏ tới'. **Đã kiểm chứng** bằng shortcut thật do PowerShell tạo: đọc đúng đường dẫn đích. Tệp không phải shortcut trả `None` thay vì panic.)
 - [ ] **6.7** Trình duyệt Thùng rác (xem, khôi phục, làm rỗng).
 - [ ] **6.8** Nhiều cửa sổ (mỗi cửa sổ có tab riêng).
 - [ ] **6.9** Dual pane (hai khung cạnh nhau, kéo-thả giữa hai khung).
@@ -200,3 +200,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-18 | 5.2 | Tiến trình + huỷ: `Progress` chia sẻ, thanh tiến trình và nút Huỷ ở status bar, huỷ ở ranh giới tệp. Thêm `ConflictPolicy` (Bỏ qua/Giữ cả hai/Thay thế) với hộp thoại chỉ hiện khi trùng tên thật. 12 test mới (9 worker + 3 files-fs). |
 | 2026-11-18 | 5.4, 5.5 | Accessibility: 5 widget có role+label, 18/18 nút có nhãn tiếng Việt, **kiểm chứng bằng Windows UI Automation** (29 nút đọc đúng tên). Tương phản đo bằng WCAG, sửa `text-tertiary` light 3.28 → 4.53. Thông báo tự ẩn sau 4 s; trạng thái rỗng; gợi ý Run as administrator. 5.3 kéo-thả **chưa làm** theo yêu cầu. |
 | 2026-11-18 | 6.3, 6.4, 6.2 | Tooltip breadcrumb (tự vẽ vì Slint 1.19 không có TooltipArea). Ghim sidebar lưu trong settings. Tìm đệ quy có giới hạn, huỷ được, tránh junction. 9 test mới. |
+| 2026-11-18 | 6.5, 6.6 | Xoay ảnh qua WIC (kiểm chứng 4×2 → 2×4). Đọc đích shortcut qua IShellLinkW (kiểm chứng với .lnk thật). 4 test mới. |
