@@ -95,13 +95,16 @@ export global Theme {
     // này, nên cột không thể lệch nhau và một cái tên dài không thể đẩy cột.
     out property <length> list-pad: 12px;        // lề trong của cả header và hàng
     out property <length> icon-size: 20px;       // icon loại tệp ở cột đầu
-    out property <length> icon-gap: 8px;         // icon → chữ
+    out property <length> icon-gap: 10px;        // icon → chữ
     out property <length> col-name: 280px;       // tên: quá dài thì elide
     out property <length> col-modified: 150px;   // ngày sửa
     out property <length> col-kind: 120px;       // loại
     out property <length> col-size: 110px;       // kích thước (căn phải)
     // Header "Tên" thụt vào đúng chỗ chữ của tên tệp: bỏ qua icon + khoảng cách.
-    out property <length> name-text-indent: 28px;
+    // Header và hàng dữ liệu đều bắt đầu ở `list-pad`. Trong hàng, chữ tên
+    // nằm sau icon + khoảng cách, nên header phải thụt đúng chừng đó để thẳng
+    // cột: icon-size + icon-gap = 20 + 10.
+    out property <length> name-text-indent: 19px;
 
     // ---- Chữ ----
     out property <length> font-caption: 12px;

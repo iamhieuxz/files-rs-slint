@@ -2,3 +2,4 @@
 **/target
 *.log
 docs-screenshot.png
+scripts/make-icon.exe

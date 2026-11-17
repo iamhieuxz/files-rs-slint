@@ -4,6 +4,7 @@ mod format;
 mod history;
 mod ops_worker;
 mod preview;
+mod window;
 
 use files_core::sort::ListOptions;
 use files_core::{breadcrumbs, Entry, SortBy, SortDirection, SortSpec};
@@ -165,6 +166,11 @@ fn main() -> Result<(), slint::PlatformError> {
     wire_callbacks(&ui, &app);
     install_result_pump(&ui, &app);
     install_watch_pump(&ui, &app);
+
+    // Cửa sổ không khung: nút thu nhỏ/phóng/đóng do app tự vẽ, nên phải tự
+    // chuyển chúng thành lệnh Win32.
+    window::wire(&ui);
+    window::install_state_poller(&ui);
 
     ui.run()
 }
@@ -1249,6 +1255,8 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "delete-permanent" => ask_delete_permanent(ui, app),
         "copy-path" => copy_selected_path(ui, app),
         "open-terminal" => open_terminal_here(ui, app),
+        "register-assoc" => register_association(ui),
+        "open-default-apps" => open_default_apps(ui),
         // ---- hiển thị ----
         "toggle-extensions" => {
             let v = !app.borrow().show_extensions;
@@ -1340,6 +1348,8 @@ pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "refresh", label: "Làm mới", icon: "arrow_clockwise", shortcut: "F5" },
     PaletteCommand { id: "go-up", label: "Lên một cấp", icon: "arrow_upload", shortcut: "Backspace" },
     PaletteCommand { id: "toggle-theme", label: "Đổi sáng/tối", icon: "weather_moon", shortcut: "" },
+    PaletteCommand { id: "register-assoc", label: "Đặt làm trình duyệt tệp mặc định", icon: "link", shortcut: "" },
+    PaletteCommand { id: "open-default-apps", label: "Mở Settings ứng dụng mặc định", icon: "settings", shortcut: "" },
 ];
 
 /// Commands matching `query`, case-insensitive, in palette order.
@@ -1389,6 +1399,29 @@ fn copy_selected_path(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     match files_fs::copy_text_to_clipboard(&text) {
         Ok(()) => ui.set_status_tertiary(SharedString::from("Đã sao chép đường dẫn")),
         Err(e) => ui.set_error_text(SharedString::from(e.message.as_str())),
+    }
+}
+
+/// Đăng ký app làm lựa chọn mở thư mục, rồi mở Settings để người dùng chọn.
+///
+/// Windows không cho đặt mặc định bằng code; bước này chỉ làm app xuất hiện
+/// trong danh sách, còn quyết định cuối cùng là của người dùng.
+fn register_association(ui: &AppWindow) {
+    let exe = std::env::current_exe().unwrap_or_default();
+    match files_fs::register_file_assoc(&exe) {
+        Ok(()) => {
+            ui.set_status_tertiary(SharedString::from(
+                "Đã đăng ký. Mở Settings để chọn Files RS làm mặc định.",
+            ));
+            let _ = files_fs::open_settings_page();
+        }
+        Err(e) => ui.set_error_text(SharedString::from(e.message.as_str())),
+    }
+}
+
+fn open_default_apps(ui: &AppWindow) {
+    if let Err(e) = files_fs::open_settings_page() {
+        ui.set_error_text(SharedString::from(e.message.as_str()));
     }
 }
 

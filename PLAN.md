@@ -81,6 +81,29 @@ Header và hàng dữ liệu cùng đọc các token này, nên một cái tên 
 | Kích thước thư mục tự động | luồng riêng `files-size`, token chống kết quả cũ, điền từng ô |
 | Icon thật của Windows | `SHGetFileInfoW` + `GetDIBits`, cho exe/msi/lnk/pdf/văn phòng |
 
+## Đóng gói như ứng dụng gốc
+
+| Hạng mục | Cách làm | Kiểm chứng |
+|---|---|---|
+| Icon ứng dụng | `scripts/make-icon.cs` sinh `.ico` 9 kích thước (16→256), nhúng qua `winres` | 128×128 trích ra đúng, thư mục trắng trên nền xanh |
+| Quyền administrator | `app/app.manifest` → `requestedExecutionLevel level="highestAvailable"` | chuỗi có trong `.exe` sau khi build |
+| DPI | `PerMonitorV2` + `longPathAware` trong manifest | có trong `.exe` |
+| Bỏ viền thừa | `no-frame: true` + title bar tự vẽ 36px | chụp màn hình: không còn khung Windows |
+| 3 nút cửa sổ | thu nhỏ / phóng / đóng, 46×32, hover đỏ ở nút đóng | bấm được, icon đổi khi maximize |
+| Kéo cửa sổ | `WM_NCLBUTTONDOWN` + `HTCAPTION` để Windows tự lo, kể cả snap | kéo được, double-click maximize |
+| Trình duyệt tệp mặc định | `HKCU\Software\Classes\FilesRS.Folder` + `RegisteredApplications` | đăng ký được, gỡ sạch bằng `unregister` |
+
+**Về quyền administrator:** manifest dùng `highestAvailable` chứ không phải
+`requireAdministrator`. Tài khoản thuộc nhóm Administrators sẽ được nâng quyền;
+tài khoản thường vẫn chạy được thay vì bị chặn hoàn toàn. Đổi thành
+`requireAdministrator` nếu bắt buộc — nhưng khi đó app không chạy nổi trên máy
+bị hạn chế quyền.
+
+**Về đặt làm mặc định:** Windows 10/11 không cho chương trình tự đặt mình làm
+mặc định. Module `assoc` đăng ký ProgID và capabilities trong HKCU, sau đó mở
+`ms-settings:defaultapps` để người dùng bấm chọn. Mọi cách lách đều bị Windows
+hoàn nguyên ở lần đăng nhập sau, nên không làm.
+
 ## Icon
 
 Hai tầng:

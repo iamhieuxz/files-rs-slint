@@ -4,12 +4,14 @@
 //! values defined in `files-core`, so the rest of the app stays testable.
 
 pub mod archive;
+pub mod assoc;
 pub mod drives;
 pub mod listing;
 pub mod ops;
 pub mod shellicon;
 pub mod watch;
 
+pub use assoc::{open_settings_page, register as register_file_assoc, unregister as unregister_file_assoc};
 pub use archive::{archive_name, create_zip, extract_zip, hash_file, HashKind};
 pub use drives::{list_drives, DriveInfo};
 pub use listing::read_dir;

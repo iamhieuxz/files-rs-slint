@@ -79,7 +79,14 @@ export component AppWindow inherits Window {
     min-height: 480px;
     background: Theme.solid-base;
     default-font-family: Theme.font-family;
+    // Bỏ khung cửa sổ của Windows: toàn bộ chrome do app tự vẽ, giống Files
+    // (dùng AppWindowTitleBar + ExtendsContentIntoTitleBar). Viền mỏng 1px vẫn
+    // được vẽ ở dưới để cửa sổ không "dính" vào nền phía sau.
+    no-frame: true;
     init => { key-root.focus(); }
+
+    // Trạng thái cửa sổ, Rust cập nhật sau mỗi lần người dùng bấm.
+    in-out property <bool> is-maximized: false;
 
     // ---- dữ liệu vào ----
     in-out property <[TabInfo]> tabs;
@@ -181,6 +188,11 @@ export component AppWindow inherits Window {
     callback close-palette();
     callback palette-changed(string);
     callback palette-accepted(string);
+    // Điều khiển cửa sổ (title bar tự vẽ).
+    callback window-minimize();
+    callback window-toggle-maximize();
+    callback window-close();
+    callback window-drag(length, length);
 
     // ---- bàn phím ----
     key-root := FocusScope {
@@ -245,6 +257,90 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
+        // ================= TITLE BAR TỰ VẼ =================
+        // Cửa sổ không có khung Windows (no-frame), nên phần này thay cho
+        // title bar hệ thống. Nút cửa sổ kiểu Windows 11: rộng 46px, hover nền
+        // nhạt, riêng nút đóng hover đỏ.
+        Rectangle {
+            height: 36px;
+            background: Theme.solid-secondary;
+
+            HorizontalLayout {
+                padding-left: Theme.s3;
+                spacing: Theme.s2;
+                FluentIcon {
+                    name: "folder";
+                    width: 16px;
+                    height: 16px;
+                    y: (parent.height - self.height) / 2;
+                    tint: Theme.accent;
+                }
+                Text {
+                    text: "Files RS";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-caption;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 0px;
+                Rectangle {
+                    width: 46px;
+                    height: parent.height;
+                    background: min-ta.has-hover ? Theme.subtle-hover : transparent;
+                    FluentIcon {
+                        name: "chevron_down";
+                        width: 10px;
+                        height: 10px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        tint: Theme.text-secondary;
+                    }
+                    min-ta := TouchArea { clicked => { root.window-minimize(); } }
+                }
+                Rectangle {
+                    width: 46px;
+                    height: parent.height;
+                    background: max-ta.has-hover ? Theme.subtle-hover : transparent;
+                    FluentIcon {
+                        name: root.is-maximized ? "arrow_minimize" : "square_multiple";
+                        width: 10px;
+                        height: 10px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        tint: Theme.text-secondary;
+                    }
+                    max-ta := TouchArea { clicked => { root.window-toggle-maximize(); } }
+                }
+                Rectangle {
+                    width: 46px;
+                    height: parent.height;
+                    background: close-ta.has-hover ? #c42b1c : transparent;
+                    FluentIcon {
+                        name: "dismiss";
+                        width: 10px;
+                        height: 10px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        tint: close-ta.has-hover ? #ffffff : Theme.text-secondary;
+                    }
+                    close-ta := TouchArea { clicked => { root.window-close(); } }
+                }
+            }
+
+            // Vùng kéo khai báo SAU cùng nên nằm dưới các nút.
+            TouchArea {
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                        root.window-drag(self.mouse-x, self.mouse-y);
+                    }
+                }
+            }
+        }
+
         // ================= TAB STRIP =================
         Rectangle {
             height: Theme.tab-height;

@@ -16,7 +16,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 files-core = { path = "crates/files-core" }
 files-fs = { path = "crates/files-fs" }
-slint = { version = "1.19", default-features = true, features = ["image-default-formats"] }
+slint = { version = "1.19", default-features = true, features = ["image-default-formats", "unstable-winit-030"] }
 slint-build = "1.19"
 
 [profile.dev]
