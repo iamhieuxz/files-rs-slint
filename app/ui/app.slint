@@ -54,6 +54,12 @@ export struct CrumbInfo {
     w: length,
 }
 
+// Một dòng của bảng thuộc tính (Properties).
+export struct PropRow {
+    label: string,
+    value: string,
+}
+
 export component AppWindow inherits Window {
     title: "Files RS";
     preferred-width: 1240px;
@@ -77,6 +83,8 @@ export component AppWindow inherits Window {
     // Grid cần nhóm theo hàng: Slint GridLayout không tự xuống dòng.
     in-out property <[[FileRow]]> grid-rows;
     in-out property <int> selection-count: 0;
+    // Mục đang chọn có phải tệp nén không (bật/tắt nút Giải nén).
+    in-out property <bool> selection-is-archive: false;
     in-out property <string> status-primary;
     in-out property <string> status-secondary;
     in-out property <string> status-tertiary;
@@ -103,6 +111,8 @@ export component AppWindow inherits Window {
     in-out property <string> preview-text;
     in-out property <string> preview-title;
     in-out property <string> preview-meta;
+    // Bảng thuộc tính: các dòng nhãn/giá trị, dựng ở Rust.
+    in-out property <[PropRow]> props;
 
     // hộp thoại
     in-out property <bool> dialog-open: false;
@@ -255,6 +265,20 @@ export component AppWindow inherits Window {
                 IconButton { icon: "clipboard_paste"; enabled: root.clipboard-count > 0; clicked => { root.command("paste"); } }
                 IconButton { icon: "rename"; enabled: root.selection-count == 1; clicked => { root.command("rename"); } }
                 IconButton { icon: "delete"; enabled: root.selection-count > 0; clicked => { root.command("delete"); } }
+
+                Rectangle { width: Theme.s1; }
+
+                // Nén / giải nén: chỉ bật khi lựa chọn phù hợp.
+                IconButton {
+                    icon: "folder_zip";
+                    enabled: root.selection-count > 0;
+                    clicked => { root.command("compress"); }
+                }
+                IconButton {
+                    icon: "folder_open";
+                    enabled: root.selection-count == 1 && root.selection-is-archive;
+                    clicked => { root.command("extract"); }
+                }
 
                 Rectangle { width: Theme.s1; }
 
@@ -499,18 +523,18 @@ export component AppWindow inherits Window {
                         height: Theme.header-height;
                         background: Theme.file-area;
                         HorizontalLayout {
-                            // Padding và spacing phải khớp CHÍNH XÁC với hàng dữ
-                            // liệu bên dưới, nếu không các cột sẽ lệch nhau.
-                            padding-left: Theme.s1 + Theme.s3;
-                            padding-right: Theme.s1 + Theme.s5;
-                            spacing: Theme.s1;
+                            // Bề rộng cột cố định: header và hàng dữ liệu dùng
+                            // cùng token nên không thể lệch, và tên dài chỉ bị
+                            // cắt chứ không đẩy cột khác.
+                            padding-left: Theme.s1 + Theme.list-pad;
+                            padding-right: Theme.s1 + Theme.list-pad;
+                            spacing: 0px;
 
                             Rectangle {
-                                horizontal-stretch: 5;
+                                width: Theme.col-name;
                                 Text {
-                                    // Dịch vào đúng chỗ chữ của tên tệp: bỏ qua
-                                    // 16px icon + s2 spacing ở đầu hàng dữ liệu.
-                                    x: 16px + Theme.s2;
+                                    x: Theme.name-text-indent;
+                                    width: parent.width - Theme.name-text-indent;
                                     text: "Tên" + (root.sort-column == "name" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
                                     color: root.sort-column == "name" ? Theme.text-primary : Theme.text-secondary;
                                     font-size: Theme.font-caption;
@@ -521,39 +545,46 @@ export component AppWindow inherits Window {
                                 TouchArea { clicked => { root.sort-by("name"); } }
                             }
                             Rectangle {
-                                horizontal-stretch: 2;
+                                width: Theme.col-modified;
                                 Text {
+                                    width: parent.width;
                                     text: "Ngày sửa" + (root.sort-column == "modified" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
                                     color: root.sort-column == "modified" ? Theme.text-primary : Theme.text-secondary;
                                     font-size: Theme.font-caption;
+                                    font-weight: Theme.weight-semibold;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                                 TouchArea { clicked => { root.sort-by("modified"); } }
                             }
                             Rectangle {
-                                horizontal-stretch: 2;
+                                width: Theme.col-kind;
                                 Text {
+                                    width: parent.width;
                                     text: "Loại" + (root.sort-column == "kind" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
                                     color: root.sort-column == "kind" ? Theme.text-primary : Theme.text-secondary;
                                     font-size: Theme.font-caption;
+                                    font-weight: Theme.weight-semibold;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                                 TouchArea { clicked => { root.sort-by("kind"); } }
                             }
                             Rectangle {
-                                horizontal-stretch: 1;
+                                width: Theme.col-size;
                                 Text {
+                                    width: parent.width;
                                     text: "Kích thước" + (root.sort-column == "size" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
                                     color: root.sort-column == "size" ? Theme.text-primary : Theme.text-secondary;
                                     font-size: Theme.font-caption;
+                                    font-weight: Theme.weight-semibold;
                                     horizontal-alignment: right;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                                 TouchArea { clicked => { root.sort-by("size"); } }
                             }
+                            Rectangle { horizontal-stretch: 1; }
                         }
                         Rectangle {
                             y: parent.height - 1px;
@@ -580,23 +611,26 @@ export component AppWindow inherits Window {
                                     animate background { duration: 70ms; }
 
                                     HorizontalLayout {
-                                        // Hàng dữ liệu nằm trong ScrollView có padding s1,
-                                        // nên lề trái tuyệt đối = s1 + s3, khớp header.
-                                        padding-left: Theme.s3;
-                                        padding-right: Theme.s5;
-                                        spacing: Theme.s1;
+                                        // Cùng token với header.
+                                        padding-left: Theme.list-pad;
+                                        padding-right: Theme.list-pad;
+                                        spacing: 0px;
 
+                                        // Cột 1: icon + tên, bề rộng cố định.
                                         HorizontalLayout {
-                                            horizontal-stretch: 5;
-                                            spacing: Theme.s2;
+                                            width: Theme.col-name;
+                                            spacing: Theme.icon-gap;
                                             FluentIcon {
                                                 name: row.icon;
-                                                width: 16px;
-                                                height: 16px;
+                                                width: Theme.icon-size;
+                                                height: Theme.icon-size;
                                                 y: (parent.height - self.height) / 2;
                                                 tint: row.glyph;
                                             }
                                             Text {
+                                                // width cố định + elide: tên dài bị cắt,
+                                                // không đẩy các cột sau.
+                                                width: parent.width - Theme.icon-size - Theme.icon-gap;
                                                 text: row.name;
                                                 color: row.is-hidden ? Theme.text-tertiary : Theme.text-primary;
                                                 font-size: Theme.font-body;
@@ -605,7 +639,7 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         Text {
-                                            horizontal-stretch: 2;
+                                            width: Theme.col-modified;
                                             text: row.modified;
                                             color: Theme.text-secondary;
                                             font-size: Theme.font-caption;
@@ -613,7 +647,7 @@ export component AppWindow inherits Window {
                                             overflow: elide;
                                         }
                                         Text {
-                                            horizontal-stretch: 2;
+                                            width: Theme.col-kind;
                                             text: row.kind;
                                             color: Theme.text-secondary;
                                             font-size: Theme.font-caption;
@@ -621,13 +655,15 @@ export component AppWindow inherits Window {
                                             overflow: elide;
                                         }
                                         Text {
-                                            horizontal-stretch: 1;
+                                            width: Theme.col-size;
                                             text: row.size;
                                             color: Theme.text-secondary;
                                             font-size: Theme.font-caption;
                                             horizontal-alignment: right;
                                             vertical-alignment: center;
+                                            overflow: elide;
                                         }
+                                        Rectangle { horizontal-stretch: 1; }
                                     }
                                     rta := TouchArea {
                                         clicked => { }
@@ -719,20 +755,54 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding: Theme.s4;
                     spacing: Theme.s2;
-                    Text {
-                        text: root.preview-kind == "none" ? "Chọn một mục để xem trước" : root.preview-title;
-                        color: Theme.text-primary;
-                        font-size: Theme.font-subtitle;
-                        font-weight: Theme.weight-semibold;
-                        overflow: elide;
+
+                    // Tiêu đề + bảng thuộc tính ghim trên cùng: người dùng chọn
+                    // một mục là thấy ngay thông tin, không phải cuộn.
+                    // `alignment: start` giữ khối này ở đỉnh; nếu để mặc định
+                    // VerticalLayout sẽ chia đều và đẩy nó xuống đáy panel.
+                    VerticalLayout {
+                        spacing: Theme.s1;
+                        alignment: start;
+                        Text {
+                            text: root.preview-kind == "none" ? "Chọn một mục để xem trước" : root.preview-title;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-subtitle;
+                            font-weight: Theme.weight-semibold;
+                            overflow: elide;
+                        }
+
+                        if root.props.length > 0: Rectangle {
+                            height: root.props.length * 24px;
+                            VerticalLayout {
+                                spacing: 0px;
+                                for p in root.props: Rectangle {
+                                    height: 24px;
+                                    HorizontalLayout {
+                                        spacing: Theme.s2;
+                                        Text {
+                                            width: 92px;
+                                            text: p.label;
+                                            color: Theme.text-tertiary;
+                                            font-size: Theme.font-caption;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: p.value;
+                                            color: Theme.text-secondary;
+                                            font-size: Theme.font-caption;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    Text {
-                        text: root.preview-meta;
-                        color: Theme.text-tertiary;
-                        font-size: Theme.font-caption;
-                        wrap: word-wrap;
-                    }
-                    Rectangle {
+
+                    // Ảnh/văn bản chiếm phần còn lại.
+                    if root.preview-kind == "image" || root.preview-kind == "text": Rectangle {
                         vertical-stretch: 1;
                         background: Theme.solid-base;
                         border-radius: Theme.r-md;

@@ -255,6 +255,20 @@ fn apply_listing(ui: &AppWindow, app: &Rc<RefCell<App>>, listing: files_core::Li
     ui.set_busy(false);
     push_view(ui, app);
     push_status(ui, app);
+    // Bảng thuộc tính của mục đầu tiên: bỏ trống thì panel trông như hỏng.
+    let first = {
+        let s = app.borrow();
+        let tab = s.tab();
+        tab.visible
+            .first()
+            .and_then(|i| tab.entries.get(*i))
+            .cloned()
+    };
+    if let Some(entry) = first {
+        preview::show(ui, &entry);
+    } else {
+        preview::clear(ui);
+    }
 }
 
 fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
@@ -296,6 +310,15 @@ fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.set_can_back(tab.history.can_back());
     ui.set_can_forward(tab.history.can_forward());
     ui.set_selection_count(tab.selection.len() as i32);
+    // Nút "Giải nén" chỉ bật khi mục đang chọn thật sự là tệp .zip.
+    let is_archive = tab.selection.len() == 1
+        && tab
+            .selected_entries()
+            .first()
+            .and_then(|e| e.extension.as_deref())
+            .map(|x| x.eq_ignore_ascii_case("zip"))
+            .unwrap_or(false);
+    ui.set_selection_is_archive(is_archive);
     ui.set_sort_column(SharedString::from(match tab.sort.by {
         SortBy::Size => "size",
         SortBy::DateModified => "modified",
@@ -697,7 +720,20 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let (w, a) = (ui.as_weak(), app.clone());
         ui.on_row_context_menu(move |i, x, y| {
             let Some(ui) = w.upgrade() else { return };
-            let has_sel = !a.borrow().tab().selection.is_empty();
+            // Lệnh nén/giải nén chỉ có nghĩa với đúng loại mục.
+            let (is_dir, is_archive) = {
+                let s = a.borrow();
+                match s.tab().selected_entries().first() {
+                    Some(e) => (
+                        e.is_dir(),
+                        e.extension
+                            .as_deref()
+                            .map(|x| x.eq_ignore_ascii_case("zip"))
+                            .unwrap_or(false),
+                    ),
+                    None => (false, false),
+                }
+            };
             let items = vec![
                 menu("open", "Mở", "open", "Enter", i >= 0, false),
                 menu("open-new-tab", "Mở trong tab mới", "window", "", i >= 0, false),
@@ -707,9 +743,15 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 menu("rename", "Đổi tên", "rename", "F2", i >= 0, false),
                 menu("delete", "Xoá", "delete", "Del", i >= 0, false),
                 menu("", "", "", "", false, true),
+                menu("compress", "Nén thành ZIP", "folder_zip", "", i >= 0, false),
+                menu("extract", "Giải nén", "folder_open", "", is_archive, false),
+                menu("", "", "", "", false, true),
+                menu("hash-sha256", "Mã băm SHA-256", "shield", "", i >= 0 && !is_dir, false),
+                menu("hash-md5", "Mã băm MD5", "shield", "", i >= 0 && !is_dir, false),
+                menu("", "", "", "", false, true),
+                menu("folder-size", "Tính kích thước", "calculator", "", is_dir, false),
                 menu("properties", "Thuộc tính", "info", "", i >= 0, false),
             ];
-            let _ = has_sel;
             ui.set_menu_items(ModelRc::new(VecModel::from(items)));
             ui.set_menu_x(x);
             ui.set_menu_y(y);
@@ -909,6 +951,12 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
             }
         }
         "properties" => show_properties(ui, app),
+        "compress" => compress_selection(ui, app),
+        "extract" => extract_selection(ui, app),
+        "hash-sha256" => hash_selection(ui, app, files_fs::HashKind::Sha256),
+        "hash-md5" => hash_selection(ui, app, files_fs::HashKind::Md5),
+        "hash-sha1" => hash_selection(ui, app, files_fs::HashKind::Sha1),
+        "folder-size" => view_folder_size(ui, app),
         // Mở thư mục đang chọn trong một tab mới, giữ tab hiện tại nguyên vẹn.
         "open-new-tab" => {
             let target = {
@@ -1111,6 +1159,81 @@ fn show_properties(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     preview::show(ui, &entry);
 }
 
+/// Compress the selection into `<name>.zip` in the current folder.
+fn compress_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let (sources, dir) = {
+        let s = app.borrow();
+        (s.tab().selected_paths(), s.tab().current().to_path_buf())
+    };
+    if sources.is_empty() {
+        return;
+    }
+    let name = files_fs::archive_name(&sources);
+    let dest = dir.join(format!("{name}.zip"));
+    ui.set_busy(true);
+    ui.set_busy_text(SharedString::from("Đang nén…"));
+    app.borrow().worker.submit(Job::Zip { sources, dest });
+}
+
+/// Extract the selected archive into a folder named after it.
+fn extract_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let archive = {
+        let s = app.borrow();
+        s.tab()
+            .selected_entries()
+            .first()
+            .map(|e| PathBuf::from(&e.path))
+    };
+    let Some(archive) = archive else { return };
+    // `photos.zip` extracts into `photos`, and `photos (2)` if that exists.
+    let stem = archive
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "extracted".into());
+    let parent = archive.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let mut target = parent.join(&stem);
+    let mut n = 2;
+    while target.exists() {
+        target = parent.join(format!("{stem} ({n})"));
+        n += 1;
+    }
+    ui.set_busy(true);
+    ui.set_busy_text(SharedString::from("Đang giải nén…"));
+    app.borrow().worker.submit(Job::Unzip { archive, target });
+}
+
+fn hash_selection(ui: &AppWindow, app: &Rc<RefCell<App>>, kind: files_fs::HashKind) {
+    let path = {
+        let s = app.borrow();
+        s.tab()
+            .selected_entries()
+            .first()
+            .map(|e| PathBuf::from(&e.path))
+    };
+    if let Some(path) = path {
+        ui.set_busy(true);
+        ui.set_busy_text(SharedString::from("Đang tính mã băm…"));
+        app.borrow().worker.submit(Job::Hash { path, kind });
+    }
+}
+
+/// Walk the selected folder to learn its size, then fill the size column.
+fn view_folder_size(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let path = {
+        let s = app.borrow();
+        s.tab()
+            .selected_entries()
+            .first()
+            .filter(|e| e.is_dir())
+            .map(|e| PathBuf::from(&e.path))
+    };
+    if let Some(path) = path {
+        ui.set_busy(true);
+        ui.set_busy_text(SharedString::from("Đang tính kích thước thư mục…"));
+        app.borrow().worker.submit(Job::FolderSize { path });
+    }
+}
+
 // ---------------------------------------------------------------- pumps
 
 /// Drain finished background work on a short timer.
@@ -1175,6 +1298,27 @@ fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                             ui.set_error_text(SharedString::from(e.message.as_str()));
                         }
                     }
+                }
+                Ok(JobDone::FolderSize { path, bytes }) => {
+                    ui.set_busy(false);
+                    ui.set_busy_text(SharedString::default());
+                    // Fill the size cell in place: the row keeps its position and
+                    // only the value changes.
+                    {
+                        let mut s = a.borrow_mut();
+                        let active = s.active;
+                        if let Some(e) = s.tabs[active]
+                            .entries
+                            .iter_mut()
+                            .find(|e| e.path == path.to_string_lossy())
+                        {
+                            e.size = Some(bytes);
+                        }
+                    }
+                    push_view(&ui, &a);
+                    ui.set_status_tertiary(SharedString::from(
+                        format!("Kích thước thư mục: {}", format::format_size(Some(bytes))).as_str(),
+                    ));
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => break,

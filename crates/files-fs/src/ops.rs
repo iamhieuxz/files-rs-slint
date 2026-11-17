@@ -250,3 +250,25 @@ pub fn suggested_copy_name(source: &Path) -> String {
         .unwrap_or_default();
     format!("{stem} - Bản sao{ext}")
 }
+
+/// Total size of everything under `dir`, in bytes.
+///
+/// This walks the tree, which on a large folder can take seconds; callers must
+/// run it off the UI thread. Unreadable children are skipped rather than
+/// failing the whole count — a folder the user can see should still report the
+/// size of the part that is readable.
+pub fn directory_size(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.is_dir() {
+            total = total.saturating_add(directory_size(&entry.path()));
+        } else {
+            total = total.saturating_add(meta.len());
+        }
+    }
+    total
+}

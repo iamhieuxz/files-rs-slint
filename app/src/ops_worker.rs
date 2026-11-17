@@ -47,6 +47,25 @@ pub enum Job {
         from: PathBuf,
         to: String,
     },
+    /// Compress `sources` into `dest`.
+    Zip {
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+    },
+    /// Extract `archive` into a folder next to it.
+    Unzip {
+        archive: PathBuf,
+        target: PathBuf,
+    },
+    /// Hash one file; the result is a hex digest.
+    Hash {
+        path: PathBuf,
+        kind: files_fs::HashKind,
+    },
+    /// Walk a folder to learn its total size.
+    FolderSize {
+        path: PathBuf,
+    },
 }
 
 /// Result of a job.
@@ -61,6 +80,11 @@ pub enum JobDone {
     OpDone {
         label: String,
         result: Result<(), FsError>,
+    },
+    /// A folder's total size, so the UI can fill the size column in place.
+    FolderSize {
+        path: PathBuf,
+        bytes: u64,
     },
 }
 
@@ -152,6 +176,39 @@ fn run(job: Job) -> JobDone {
                 Err(e) => (format!("Đổi tên lỗi: {}", e.message), Err(e)),
             };
             JobDone::OpDone { label, result }
+        }
+        Job::Zip { sources, dest } => {
+            let n = sources.len();
+            let (label, result) = match files_fs::create_zip(&sources, &dest) {
+                Ok(count) => (
+                    format!("Đã nén {count} tệp vào {}", file_label(&dest)),
+                    Ok(()),
+                ),
+                Err(e) => (format!("Nén lỗi: {}", e.message), Err(e)),
+            };
+            let _ = n;
+            JobDone::OpDone { label, result }
+        }
+        Job::Unzip { archive, target } => {
+            let (label, result) = match files_fs::extract_zip(&archive, &target) {
+                Ok(count) => (
+                    format!("Đã giải nén {count} tệp vào {}", file_label(&target)),
+                    Ok(()),
+                ),
+                Err(e) => (format!("Giải nén lỗi: {}", e.message), Err(e)),
+            };
+            JobDone::OpDone { label, result }
+        }
+        Job::Hash { path, kind } => {
+            let (label, result) = match files_fs::hash_file(&path, kind) {
+                Ok(digest) => (format!("{}: {digest}", kind.label()), Ok(())),
+                Err(e) => (format!("Tính mã băm lỗi: {}", e.message), Err(e)),
+            };
+            JobDone::OpDone { label, result }
+        }
+        Job::FolderSize { path } => {
+            let bytes = files_fs::directory_size(&path);
+            JobDone::FolderSize { path, bytes }
         }
     }
 }

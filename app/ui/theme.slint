@@ -88,6 +88,19 @@ export global Theme {
     out property <length> preview-width: 300px;
     out property <length> control-height: 32px;
 
+    // ---- Cột bảng tệp ----
+    // Bề rộng CỐ ĐỊNH cho từng cột. Header và hàng dữ liệu cùng đọc các giá trị
+    // này, nên cột không thể lệch nhau và một cái tên dài không thể đẩy cột.
+    out property <length> list-pad: 12px;        // lề trong của cả header và hàng
+    out property <length> icon-size: 16px;       // icon loại tệp ở cột đầu
+    out property <length> icon-gap: 8px;         // icon → chữ
+    out property <length> col-name: 280px;       // tên: quá dài thì elide
+    out property <length> col-modified: 150px;   // ngày sửa
+    out property <length> col-kind: 120px;       // loại
+    out property <length> col-size: 110px;       // kích thước (căn phải)
+    // Header "Tên" thụt vào đúng chỗ chữ của tên tệp: bỏ qua icon + khoảng cách.
+    out property <length> name-text-indent: 24px;
+
     // ---- Chữ ----
     out property <length> font-caption: 12px;
     out property <length> font-body: 14px;

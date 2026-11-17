@@ -161,3 +161,31 @@ fn a_dotfile_is_reported_hidden() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn directory_size_sums_the_whole_tree() {
+    let dir = scratch("dirsize");
+    std::fs::create_dir_all(dir.join("a/b")).unwrap();
+    std::fs::write(dir.join("top.txt"), vec![0u8; 100]).unwrap();
+    std::fs::write(dir.join("a/mid.txt"), vec![0u8; 200]).unwrap();
+    std::fs::write(dir.join("a/b/deep.txt"), vec![0u8; 300]).unwrap();
+
+    assert_eq!(files_fs::directory_size(&dir), 600);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn directory_size_of_an_empty_folder_is_zero() {
+    let dir = scratch("dirsize-empty");
+    assert_eq!(files_fs::directory_size(&dir), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn directory_size_of_a_missing_folder_is_zero_not_a_panic() {
+    let dir = scratch("dirsize-missing");
+    let missing = dir.join("nope");
+    assert_eq!(files_fs::directory_size(&missing), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
