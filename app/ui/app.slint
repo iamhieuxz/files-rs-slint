@@ -265,6 +265,18 @@ export component AppWindow inherits Window {
             height: 36px;
             background: Theme.solid-secondary;
 
+            // Vùng kéo khai báo TRƯỚC các nút để các nút nằm trên và nhận click.
+            // Bề rộng chừa đúng 138px cho 3 nút cửa sổ bên phải.
+            TouchArea {
+                width: parent.width - 138px;
+                height: parent.height;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                        root.window-drag(self.mouse-x, self.mouse-y);
+                    }
+                }
+            }
+
             HorizontalLayout {
                 padding-left: Theme.s3;
                 spacing: Theme.s2;
@@ -331,14 +343,6 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // Vùng kéo khai báo SAU cùng nên nằm dưới các nút.
-            TouchArea {
-                pointer-event(e) => {
-                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                        root.window-drag(self.mouse-x, self.mouse-y);
-                    }
-                }
-            }
         }
 
         // ================= TAB STRIP =================

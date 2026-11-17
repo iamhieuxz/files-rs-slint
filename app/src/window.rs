@@ -59,20 +59,18 @@ pub fn wire(ui: &crate::AppWindow) {
         let w = ui.as_weak();
         ui.on_window_drag(move |_x, _y| {
             let Some(ui) = w.upgrade() else { return };
+            // `winit` lo việc kéo cửa sổ: nó giữ đúng trạng thái chuột của
+            // Slint và trả về ngay, thay vì chặn UI thread.
+            //
+            // Trước đây chỗ này gửi `WM_NCLBUTTONDOWN` + `HTCAPTION`. Cách đó
+            // đúng với app Win32 thuần nhưng sai ở đây: `SendMessage` chạy vòng
+            // lặp modal của Windows ngay trong handler của Slint, và Slint
+            // không bao giờ nhận được `WM_LBUTTONUP` — nên nó tưởng chuột vẫn
+            // đang nhấn và nuốt mọi cú click sau đó. Đó chính là lý do app
+            // "không tương tác được".
             ui.window().with_winit_window(|win| {
-                if let Some(hwnd) = hwnd_of(win) {
-                    // Gửi WM_NCLBUTTONDOWN với HTCAPTION: Windows tự lo phần kéo,
-                    // kể cả snap và double-click để maximize — đúng hành vi của
-                    // title bar thật, thay vì tự tính delta chuột.
-                    unsafe {
-                        let _ = ReleaseCapture();
-                        SendMessageW(
-                            hwnd,
-                            WM_NCLBUTTONDOWN,
-                            Some(WPARAM(2)), // HTCAPTION
-                            Some(LPARAM(0)),
-                        );
-                    }
+                if let Err(e) = win.drag_window() {
+                    eprintln!("[window] drag_window lỗi: {e}");
                 }
             });
         });
@@ -90,13 +88,10 @@ fn hwnd_of(win: &slint::winit_030::winit::window::Window) -> Option<HWND> {
 }
 
 #[cfg(windows)]
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-#[cfg(windows)]
-use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+use windows::Win32::Foundation::HWND;
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsZoomed, SendMessageW, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
-    WM_NCLBUTTONDOWN,
+    IsZoomed, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
 };
 
 /// Non-Windows builds keep the callbacks but do nothing, so the UI still builds.

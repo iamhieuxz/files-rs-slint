@@ -711,8 +711,12 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let (w, a) = (ui.as_weak(), app.clone());
         ui.on_toggle_hidden(move || {
             let Some(ui) = w.upgrade() else { return };
-            a.borrow_mut().show_hidden = !a.borrow().show_hidden;
-            ui.set_show_hidden(a.borrow().show_hidden);
+            // Phải đọc rồi mới ghi trong hai lần mượn riêng: viết
+            // `a.borrow_mut().x = !a.borrow().x` là mượn mutable và immutable
+            // cùng lúc, và `RefCell` panic ngay — app chết ngay cú click đầu.
+            let v = !a.borrow().show_hidden;
+            a.borrow_mut().show_hidden = v;
+            ui.set_show_hidden(v);
             reload(&ui, &a);
         });
     }

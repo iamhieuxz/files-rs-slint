@@ -144,7 +144,11 @@ Start, format drive, recycle bin browser, rotate ảnh, set wallpaper.
 | Watcher chồng nhiều lần đọc | `busy_now()` luôn trả `false` | Thêm cờ `load_in_flight`, đặt lại khi có kết quả |
 | "Mở trong tab mới" không làm gì | Lệnh chưa có nhánh xử lý | Thêm nhánh tạo `Tab` mới |
 | Bảng thuộc tính nằm đáy panel | `VerticalLayout` chia đều chiều cao | Bọc khối trong layout `alignment: start` |
+| Bảng thuộc tính nằm đáy panel | `VerticalLayout` chia đều chiều cao | Bọc khối trong layout `alignment: start` |
 | Binding loop ở bảng thuộc tính | Chiều cao suy ra từ `parent.height` | Chiều cao chỉ phụ thuộc số dòng |
+| **App chết ngay cú click đầu** | `a.borrow_mut().show_hidden = !a.borrow().show_hidden` mượn mutable và immutable cùng lúc → `RefCell already borrowed` panic | Đọc ra biến trước rồi mới ghi |
+| Kéo cửa sổ làm app đứng | `SendMessageW(WM_NCLBUTTONDOWN)` chạy vòng lặp modal ngay trong handler của Slint, và Slint không nhận `WM_LBUTTONUP` nên tưởng chuột vẫn nhấn | Dùng `winit::Window::drag_window()`, trả về ngay và giữ đúng trạng thái chuột |
+| Nút cửa sổ không bấm được | Vùng kéo khai báo sau các nút nên nằm trên, nuốt click | Khai báo vùng kéo trước, và giới hạn bề rộng `parent.width - 138px` |
 
 
 
