@@ -356,7 +356,10 @@ export component DialogSurface inherits Rectangle {
     callback cancelled();
 
     width: 440px;
-    height: 220px;
+    // Chiều cao suy ra từ nội dung: title + @children + hàng nút, cộng padding
+    // hai đầu. Đặt cứng 220px thì hộp thoại xác nhận (không có ô nhập) thừa
+    // một khoảng trống lớn.
+    height: layout.preferred-height + Theme.s5 * 2;
     border-radius: Theme.r-lg;
     background: Theme.solid-tertiary;
     border-width: 1px;
@@ -365,7 +368,7 @@ export component DialogSurface inherits Rectangle {
     drop-shadow-color: #00000040;
     drop-shadow-offset-y: 8px;
 
-    VerticalLayout {
+    layout := VerticalLayout {
         padding: Theme.s5;
         spacing: Theme.s4;
         Text {

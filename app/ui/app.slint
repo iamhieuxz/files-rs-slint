@@ -1229,15 +1229,27 @@ export component AppWindow inherits Window {
                 wrap: word-wrap;
             }
             if root.dialog-kind != "confirm-delete" && root.dialog-kind != "confirm-delete-permanent" && root.dialog-kind != "confirm-default": Rectangle {
-                height: 32px;
-                dialog-input := TextInput {
-                    vertical-alignment: center;
-                    color: Theme.text-primary;
-                    font-size: Theme.font-body;
-                    single-line: true;
-                    text: root.dialog-value;
-                    edited => { root.dialog-value = self.text; }
-                    accepted => { root.dialog-confirm(self.text); }
+                // Ô nhập phải có khung nhìn thấy được: trước đây nó trong suốt
+                // nên hộp thoại đổi tên / tạo mới trông như không có chỗ gõ.
+                height: 36px;
+                border-radius: Theme.r-sm;
+                background: Theme.solid-base;
+                border-width: 1px;
+                border-color: dialog-input.has-focus ? Theme.accent : Theme.stroke-strong;
+                animate border-color { duration: 100ms; }
+                HorizontalLayout {
+                    padding-left: Theme.s3;
+                    padding-right: Theme.s3;
+                    dialog-input := TextInput {
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-body;
+                        single-line: true;
+                        text: root.dialog-value;
+                        edited => { root.dialog-value = self.text; }
+                        accepted => { root.dialog-confirm(self.text); }
+                    }
                 }
             }
         }
