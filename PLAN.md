@@ -152,6 +152,9 @@ Start, format drive, recycle bin browser, rotate ảnh, set wallpaper.
 | **Icon chặn thao tác tệp** | Icon và tạo/đổi tên/xoá dùng chung một luồng, một icon chậm làm mọi lệnh sau đứng im | Tách `AuxJob` sang luồng `files-bg`; có test xếp 300 icon trước rồi kiểm tra lệnh tạo vẫn chạy |
 | **App mở kèm cửa sổ console** | Thiếu `windows_subsystem` | `#![cfg_attr(windows, windows_subsystem = "windows")]` |
 | **"Access is denied (os error 5)" khó hiểu** | Hiển thị nguyên văn lỗi Windows | `format::explain_error` dịch sang câu hành động được |
+| **Đóng tab chưa đủ** | Chỉ có nút × và Ctrl+W; các lệnh đóng nhóm chỉ nằm trong Command Palette nên khó tìm | Menu chuột phải trên tab: Nhân bản, Đóng tab, Đóng các tab khác, Đóng tab bên phải/trái, Đóng tất cả |
+| **× và menu đóng tab lệch hành vi** | Hai đường xử lý riêng biệt | Gộp về `close_tab_at`; phép toán chỉ số tách thành `close_index_result` với 7 test |
+| **Vùng bấm tab chồng nhau** | Hai TouchArea chồng lên nhau (nút × và cả tab) | Một TouchArea phủ toàn tab, tự xác định vùng × theo `mouse-x` |
 
 ## Ghi log
 
