@@ -14,6 +14,7 @@ mod slint_generated {
 }
 use slint_generated::*;
 
+mod dialogs;
 mod file_ops;
 mod format;
 mod history;
@@ -30,6 +31,7 @@ mod tags;
 mod window;
 
 use files_core::{SortBy, SortDirection, SortSpec};
+use dialogs::{ask_delete, ask_delete_permanent, ask_new, ask_rename, confirm_dialog, show_new_menu, show_properties};
 use file_ops::{
     compress_selection, copy_selected_path, do_paste, extract_selection, hash_selection,
     open_terminal_here, set_clipboard, view_folder_size,
@@ -44,7 +46,7 @@ use tabs::{
 use view::{
     apply_shell_icon, fill_size_cell, push_status, push_view, refresh_theme, to_slint_image,
 };
-use ops_worker::{Job, JobDone, Worker};
+use ops_worker::{JobDone, Worker};
 use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
 use slint::ComponentHandle;
 use std::cell::RefCell;
@@ -827,24 +829,6 @@ pub fn filter_palette(query: &str) -> Vec<&'static PaletteCommand> {
 
 // ---------------------------------------------------------------- file commands
 
-/// Ask before a permanent delete: there is no undo, so the dialog is the guard.
-fn ask_delete_permanent(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let n = app.borrow().tab().selection.len();
-    if n == 0 {
-        return;
-    }
-    ui.set_dialog_kind(SharedString::from("confirm-delete-permanent"));
-    ui.set_dialog_title(SharedString::from("Xoá vĩnh viễn"));
-    ui.set_dialog_text(SharedString::from(
-        format!("Xoá {n} mục và KHÔNG chuyển vào Thùng rác? Không thể hoàn tác.").as_str(),
-    ));
-    ui.set_dialog_primary_label(SharedString::from("Xoá vĩnh viễn"));
-    ui.set_dialog_has_input(false);
-    ui.set_dialog_allows_empty(false);
-    ui.set_dialog_value(SharedString::default());
-    ui.set_dialog_open(true);
-}
-
 /// Đăng ký app làm lựa chọn mở thư mục, rồi mở Settings để người dùng chọn.
 ///
 /// Windows không cho đặt mặc định bằng code; bước này chỉ làm app xuất hiện
@@ -963,128 +947,6 @@ fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
         ),
         has_dot: true,
     }
-}
-
-fn ask_delete(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let n = app.borrow().tab().selection.len();
-    if n == 0 {
-        return;
-    }
-    ui.set_dialog_kind(SharedString::from("confirm-delete"));
-    ui.set_dialog_title(SharedString::from("Xoá mục"));
-    ui.set_dialog_text(SharedString::from(
-        format!("Chuyển {n} mục đã chọn vào Thùng rác?").as_str(),
-    ));
-    ui.set_dialog_primary_label(SharedString::from("Xoá"));
-    ui.set_dialog_has_input(false);
-    ui.set_dialog_allows_empty(false);
-    ui.set_dialog_value(SharedString::default());
-    ui.set_dialog_open(true);
-}
-
-fn ask_rename(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let current = {
-        let s = app.borrow();
-        s.tab().selected_entries().first().map(|e| e.name.clone())
-    };
-    let Some(name) = current else { return };
-    ui.set_dialog_kind(SharedString::from("rename"));
-    ui.set_dialog_title(SharedString::from("Đổi tên"));
-    ui.set_dialog_text(SharedString::from("Nhập tên mới"));
-    ui.set_dialog_primary_label(SharedString::from("Đổi tên"));
-    ui.set_dialog_has_input(true);
-    ui.set_dialog_allows_empty(false);
-    ui.set_dialog_value(SharedString::from(name.as_str()));
-    ui.set_dialog_open(true);
-}
-
-fn ask_new(ui: &AppWindow, kind: &str) {
-    let (title, placeholder, label) = if kind == "new-folder" {
-        ("Thư mục mới", "Thư mục mới", "Tạo")
-    } else {
-        ("Tệp mới", "Tệp mới.txt", "Tạo")
-    };
-    ui.set_dialog_kind(SharedString::from(kind));
-    ui.set_dialog_title(SharedString::from(title));
-    ui.set_dialog_text(SharedString::from(placeholder));
-    ui.set_dialog_primary_label(SharedString::from(label));
-    ui.set_dialog_has_input(true);
-    // Tạo thư mục/tệp mới: để trống vẫn bấm được, Rust tự chọn tên chưa dùng.
-    ui.set_dialog_allows_empty(true);
-    ui.set_dialog_value(SharedString::default());
-    ui.set_dialog_open(true);
-}
-
-/// Menu của nút "Mới" (phần mũi tên tách rời).
-fn show_new_menu(ui: &AppWindow, x: f32, y: f32) {
-    let items = vec![
-        menu("new-folder", "Thư mục mới", "folder", "Ctrl+Shift+N", true, false),
-        menu("new-file", "Tệp văn bản mới", "document", "", true, false),
-    ];
-    ui.set_menu_items(ModelRc::new(VecModel::from(items)));
-    ui.set_menu_x(x);
-    ui.set_menu_y(y);
-    ui.set_menu_open(true);
-}
-
-fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
-    let kind = ui.get_dialog_kind().to_string();
-    ui.set_dialog_open(false);
-    let current = app.borrow().tab().current().to_path_buf();
-    // Ghi lại để khi người dùng báo "không được" thì biết lệnh có tới Rust không,
-    // và thư mục đích là đâu.
-    logging::write(&format!(
-        "xác nhận: kind={kind} value={value:?} tại {:?}",
-        current
-    ));
-
-    match kind.as_str() {
-        "rename" => {
-            let from = {
-                let s = app.borrow();
-                s.tab().selected_entries().first().map(|e| PathBuf::from(&e.path))
-            };
-            if let Some(from) = from {
-                app.borrow().worker.submit(Job::Rename { from, to: value.to_string() });
-                ui.set_busy(true);
-                ui.set_busy_text(SharedString::from("Đang đổi tên…"));
-            }
-        }
-        "new-folder" => {
-            app.borrow().worker.submit(Job::CreateFolder { parent: current, name: value.to_string() });
-            ui.set_busy(true);
-            ui.set_busy_text(SharedString::from("Đang tạo thư mục…"));
-        }
-        "new-file" => {
-            app.borrow().worker.submit(Job::CreateFile { parent: current, name: value.to_string() });
-            ui.set_busy(true);
-            ui.set_busy_text(SharedString::from("Đang tạo tệp…"));
-        }
-        "confirm-delete" => {
-            let paths = app.borrow().tab().selected_paths();
-            if !paths.is_empty() {
-                app.borrow().worker.submit(Job::Delete { paths });
-                ui.set_busy(true);
-                ui.set_busy_text(SharedString::from("Đang chuyển vào Thùng rác…"));
-            }
-        }
-        "confirm-default" => register_association(ui),
-        "confirm-delete-permanent" => {
-            let paths = app.borrow().tab().selected_paths();
-            if !paths.is_empty() {
-                app.borrow().worker.submit(Job::DeletePermanent { paths });
-                ui.set_busy(true);
-                ui.set_busy_text(SharedString::from("Đang xoá vĩnh viễn…"));
-            }
-        }
-        _ => {}
-    }
-}
-
-fn show_properties(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let s = app.borrow();
-    let Some(entry) = s.tab().selected_entries().first().cloned() else { return };
-    preview::show(ui, entry);
 }
 
 /// Drain finished background work on a short timer.
@@ -1228,6 +1090,7 @@ fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ops_worker::Job;
 
     #[test]
     fn an_empty_palette_query_lists_every_command() {
