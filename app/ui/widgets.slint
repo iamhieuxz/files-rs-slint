@@ -242,22 +242,11 @@ export component TabItem inherits Rectangle {
         : transparent;
     animate background { duration: 90ms; }
 
-    // Bề rộng vùng nút đóng, tính từ mép phải.
-    private property <length> close-zone: 24px;
-    // Con trỏ đang ở trên nút đóng (không phải chỉ trên tab).
-    private property <bool> over-close: ta.has-hover && ta.mouse-x > root.width - close-zone;
-
-    // MỘT vùng bấm duy nhất phủ cả tab, khai báo sau cùng nên nằm trên — cùng
-    // cách hàng tệp làm. Tự xác định vùng nút × theo toạ độ chuột thay vì
-    // chồng hai TouchArea, vì cách chồng đó không nhận được chuột phải.
+    // Vùng chọn tab: KHÔNG phủ 30px cuối, để nút đóng không bị tranh chấp.
     ta := TouchArea {
-        clicked => {
-            if (root.over-close) { root.closed(); } else { root.clicked(); }
-        }
-        double-clicked => {
-            // Bấm nhanh ở vùng đóng thì đóng, đừng mở tab.
-            if (root.over-close) { root.closed(); } else { root.clicked(); }
-        }
+        width: root.width - 30px;
+        height: root.height;
+        clicked => { root.clicked(); }
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
                 root.right-clicked();
@@ -267,7 +256,7 @@ export component TabItem inherits Rectangle {
 
     HorizontalLayout {
         padding-left: Theme.s3;
-        padding-right: Theme.s1;
+        padding-right: 30px;
         spacing: Theme.s2;
         alignment: center;
 
@@ -285,20 +274,25 @@ export component TabItem inherits Rectangle {
             overflow: elide;
             horizontal-stretch: 1;
         }
-        // Chỉ là hình vẽ; vùng bấm do `ta` lo để không phải chồng TouchArea.
-        Rectangle {
-            width: 20px;
-            height: 20px;
-            border-radius: Theme.r-sm;
-            background: root.over-close ? Theme.subtle-pressed : transparent;
-            FluentIcon {
-                name: "dismiss";
-                width: 12px;
-                height: 12px;
-                x: 4px;
-                y: 4px;
-                tint: root.over-close ? Theme.text-primary : Theme.text-secondary;
-            }
+    }
+
+    // Nút đóng: dải 30px ở mép phải, khai báo sau cùng và KHÔNG chồng lên `ta`.
+    Rectangle {
+        x: root.width - 30px;
+        y: 0;
+        width: 30px;
+        height: root.height;
+        background: close-ta.has-hover ? Theme.subtle-pressed : transparent;
+        FluentIcon {
+            name: "dismiss";
+            width: 12px;
+            height: 12px;
+            x: 9px;
+            y: (parent.height - 12px) / 2;
+            tint: close-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+        }
+        close-ta := TouchArea {
+            clicked => { root.closed(); }
         }
     }
 }

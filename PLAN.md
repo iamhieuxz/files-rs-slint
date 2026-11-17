@@ -154,7 +154,8 @@ Start, format drive, recycle bin browser, rotate ảnh, set wallpaper.
 | **"Access is denied (os error 5)" khó hiểu** | Hiển thị nguyên văn lỗi Windows | `format::explain_error` dịch sang câu hành động được |
 | **Đóng tab chưa đủ** | Chỉ có nút × và Ctrl+W; các lệnh đóng nhóm chỉ nằm trong Command Palette nên khó tìm | Menu chuột phải trên tab: Nhân bản, Đóng tab, Đóng các tab khác, Đóng tab bên phải/trái, Đóng tất cả |
 | **× và menu đóng tab lệch hành vi** | Hai đường xử lý riêng biệt | Gộp về `close_tab_at`; phép toán chỉ số tách thành `close_index_result` với 7 test |
-| **Vùng bấm tab chồng nhau** | Hai TouchArea chồng lên nhau (nút × và cả tab) | Một TouchArea phủ toàn tab, tự xác định vùng × theo `mouse-x` |
+| **Nút × không đóng tab** | Vùng bấm của tab phủ lên nút ×, Slint trao sự kiện cho phần tử trên cùng nên bấm × thành chọn tab | Tab chỉ phủ `width - 30px`; nút × là dải 30px tuyệt đối ở mép phải, khai báo sau cùng, KHÔNG chồng lấn |
+| **Không nhớ giao diện** | Mọi thiết lập chỉ nằm trong bộ nhớ, khởi động lại gán cứng nền sáng | `settings.json`, áp trước khung hình đầu, ghi sau mỗi thay đổi |
 
 ## Thẻ màu (Tags)
 
@@ -180,6 +181,17 @@ lùi về `files-rs-tags.json` cạnh file exe, giống cách logger làm.
 Đường dẫn là danh tính (giống Files), nên đổi tên tệp sẽ mất thẻ. Khi mở một
 thư mục, thẻ của những mục đã biến mất trong thư mục đó được dọn đi để tệp cấu
 hình không phình ra và đường dẫn bị dùng lại không thừa hưởng màu cũ.
+
+## Nhớ giao diện
+
+Giao diện được lưu vào `settings.json` và áp lại **trước khung hình đầu tiên**,
+nên không bị chớp nền sáng rồi mới chuyển tối. Lưu: nền sáng/tối, kiểu xem
+(danh sách/lưới), sidebar, panel xem trước, mục ẩn, phần mở rộng, thư mục trước tệp.
+
+Ghi lại ngay sau mỗi thay đổi. Tệp hỏng hoặc thiếu khoá thì quay về mặc định
+chứ không chặn khởi động; `view_mode` lạ bị kẹp về danh sách.
+
+Không lưu thư mục đang mở hay danh sách tab — người dùng chờ một khởi đầu sạch.
 
 ## Ghi log
 

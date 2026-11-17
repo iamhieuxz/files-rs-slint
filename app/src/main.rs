@@ -9,6 +9,7 @@ mod history;
 mod logging;
 mod ops_worker;
 mod preview;
+mod settings;
 mod tags;
 mod window;
 
@@ -122,6 +123,9 @@ struct App {
     /// Thẻ màu của tệp và thư mục, cùng nơi lưu để ghi lại khi thay đổi.
     tags: tags::TagStore,
     tag_path: PathBuf,
+    /// Giao diện đang dùng, ghi lại sau mỗi thay đổi để lần sau mở đúng như cũ.
+    settings: settings::Settings,
+    settings_path: PathBuf,
 }
 
 impl App {
@@ -151,15 +155,20 @@ fn main() -> Result<(), slint::PlatformError> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("C:\\"));
 
+    // Nạp giao diện lần trước trước khi dựng App, để mọi thứ nhất quán ngay
+    // từ khung hình đầu tiên thay vì chớp sang nền sáng rồi mới đổi.
+    let settings_path = settings_path();
+    let saved = settings::Settings::load(&settings_path);
+
     let (worker, results) = Worker::spawn();
     let app = Rc::new(RefCell::new(App {
         tabs: vec![Tab::new(home.clone())],
         active: 0,
-        show_hidden: false,
-        show_sidebar: true,
-        show_preview: true,
-        view_mode: 0,
-        dark: false,
+        show_hidden: saved.show_hidden,
+        show_sidebar: saved.show_sidebar,
+        show_preview: saved.show_preview,
+        view_mode: saved.view_mode,
+        dark: saved.dark,
         clipboard: Vec::new(),
         clipboard_cut: false,
         load_token: 0,
@@ -170,17 +179,21 @@ fn main() -> Result<(), slint::PlatformError> {
         watch: None,
         watched_path: None,
         closed_tabs: Vec::new(),
-        show_extensions: true,
-        folders_first: true,
+        show_extensions: saved.show_extensions,
+        folders_first: saved.folders_first,
         tags: {
             let path = tag_store_path();
             tags::TagStore::load(&path)
         },
         tag_path: tag_store_path(),
+        settings: saved,
+        settings_path,
     }));
 
     build_sidebar(&ui);
-    refresh_theme(&ui, false);
+    // Áp giao diện đã lưu TRƯỚC khung hình đầu tiên, để không bị chớp sáng
+    // rồi mới tối.
+    apply_saved_ui(&ui, &app.borrow());
     reload(&ui, &app);
     sync_tabs(&ui, &app.borrow());
 
@@ -219,6 +232,72 @@ fn tag_store_path() -> PathBuf {
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .map(|d| d.join("files-rs-tags.json"))
         .unwrap_or(preferred)
+}
+
+/// Push the stored preferences into the UI.
+fn apply_saved_ui(ui: &AppWindow, app: &App) {
+    refresh_theme(ui, app.dark);
+    ui.set_view_mode(app.view_mode);
+    ui.set_show_sidebar(app.show_sidebar);
+    ui.set_show_preview(app.show_preview);
+    ui.set_show_hidden(app.show_hidden);
+    ui.set_folders_first(app.folders_first);
+}
+
+/// Where preferences live: beside the tag database.
+///
+/// Same fallback rule as the log and the tags: a confined profile falls back to
+/// the folder holding the executable so settings still persist.
+fn settings_path() -> PathBuf {
+    let preferred = settings::Settings::default_path();
+    if let Some(dir) = preferred.parent() {
+        if std::fs::create_dir_all(dir).is_ok()
+            && std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&preferred)
+                .is_ok()
+        {
+            return preferred;
+        }
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .map(|d| d.join("files-rs-settings.json"))
+        .unwrap_or(preferred)
+}
+
+/// Write the current preferences to disk.
+///
+/// Called after every change; a failed write is logged but never blocks the UI —
+/// losing a preference is annoying, crashing on it is worse.
+fn save_settings(app: &Rc<RefCell<App>>) {
+    let (path, snapshot) = {
+        let a = app.borrow();
+        (a.settings_path.clone(), a.settings.clone())
+    };
+    if let Err(e) = snapshot.save(&path) {
+        logging::write(&format!("không lưu được giao diện: {e}"));
+    }
+}
+
+/// Copy the live `App` fields into the settings snapshot, then save.
+fn persist_ui(app: &Rc<RefCell<App>>) {
+    {
+        let mut a = app.borrow_mut();
+        let s = settings::Settings {
+            dark: a.dark,
+            view_mode: a.view_mode,
+            show_sidebar: a.show_sidebar,
+            show_preview: a.show_preview,
+            show_hidden: a.show_hidden,
+            show_extensions: a.show_extensions,
+            folders_first: a.folders_first,
+        };
+        a.settings = s;
+    }
+    save_settings(app);
 }
 
 // ---------------------------------------------------------------- sidebar
@@ -785,6 +864,7 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let v = !a.borrow().show_hidden;
             a.borrow_mut().show_hidden = v;
             ui.set_show_hidden(v);
+            persist_ui(&a);
             reload(&ui, &a);
         });
     }
@@ -795,6 +875,7 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let v = !a.borrow().show_sidebar;
             a.borrow_mut().show_sidebar = v;
             ui.set_show_sidebar(v);
+            persist_ui(&a);
         });
     }
     {
@@ -804,6 +885,7 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let v = !a.borrow().show_preview;
             a.borrow_mut().show_preview = v;
             ui.set_show_preview(v);
+            persist_ui(&a);
         });
     }
     {
@@ -812,6 +894,7 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let Some(ui) = w.upgrade() else { return };
             a.borrow_mut().view_mode = mode;
             ui.set_view_mode(mode);
+            persist_ui(&a);
         });
     }
     {
@@ -821,6 +904,7 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let dark = !a.borrow().dark;
             a.borrow_mut().dark = dark;
             refresh_theme(&ui, dark);
+            persist_ui(&a);
         });
     }
     {
@@ -935,7 +1019,6 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let a = app.clone();
         ui.on_tab_context_menu(move |i, x, y| {
             let Some(ui) = w.upgrade() else { return };
-            logging::write(&format!("menu tab: i={i} x={x} y={y}"));
             let count = a.borrow().tabs.len();
             let idx = i as usize;
             if idx >= count {
@@ -1373,6 +1456,7 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "toggle-extensions" => {
             let v = !app.borrow().show_extensions;
             app.borrow_mut().show_extensions = v;
+            persist_ui(app);
             push_view(ui, app);
             ui.set_status_tertiary(SharedString::from(
                 if v { "Đang hiện phần mở rộng" } else { "Đang ẩn phần mở rộng" },
@@ -1381,6 +1465,7 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "toggle-folders-first" => {
             let v = !app.borrow().folders_first;
             app.borrow_mut().folders_first = v;
+            persist_ui(app);
             // Sắp xếp lại ngay, không cần đọc lại thư mục.
             {
                 let mut s = app.borrow_mut();
