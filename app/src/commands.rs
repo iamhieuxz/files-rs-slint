@@ -12,7 +12,7 @@ use crate::dialogs::{
 };
 use crate::file_ops::{
     compress_selection, copy_selected_path, do_paste, extract_selection, hash_selection,
-    open_terminal_here, set_clipboard, view_folder_size,
+    open_terminal_here, redo_last, set_clipboard, undo_last, view_folder_size,
 };
 use crate::navigation::{open_row, reload};
 use crate::selection::first_selected_visible;
@@ -71,6 +71,8 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     }
     match id {
         "tag-clear" => set_tag_on_selection(ui, app, None),
+        "undo" => undo_last(ui, app),
+        "redo" => redo_last(ui, app),
         "refresh" => reload(ui, app),
         "copy" => set_clipboard(ui, app, false),
         "cut" => set_clipboard(ui, app, true),
@@ -362,6 +364,8 @@ pub fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
 pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "new-folder", label: "Thư mục mới", icon: "folder", shortcut: "Ctrl+Shift+N" },
     PaletteCommand { id: "new-file", label: "Tệp mới", icon: "document", shortcut: "" },
+    PaletteCommand { id: "undo", label: "Hoàn tác", icon: "arrow_undo", shortcut: "Ctrl+Z" },
+    PaletteCommand { id: "redo", label: "Làm lại", icon: "arrow_redo", shortcut: "Ctrl+Y" },
     PaletteCommand { id: "copy", label: "Sao chép", icon: "copy", shortcut: "Ctrl+C" },
     PaletteCommand { id: "cut", label: "Cắt", icon: "cut", shortcut: "Ctrl+X" },
     PaletteCommand { id: "paste", label: "Dán", icon: "clipboard_paste", shortcut: "Ctrl+V" },

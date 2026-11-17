@@ -6,8 +6,9 @@
 //! module instead of scattered through the callbacks.
 
 use crate::slint_generated::*;
+use crate::navigation::reload;
 use crate::state::App;
-use crate::ops_worker;
+use crate::{format, logging, ops_worker};
 use ops_worker::Job;
 use slint::SharedString;
 use std::cell::RefCell;
@@ -159,3 +160,60 @@ pub fn view_folder_size(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 }
 
 // ---------------------------------------------------------------- pumps
+
+/// Hoàn tác thao tác gần nhất.
+///
+/// Chỉ ghi lại vào ngăn xếp làm lại khi thao tác ngược thật sự thành công: nếu
+/// thất bại, mục đó biến mất khỏi lịch sử thay vì lặp lại lỗi mãi.
+pub fn undo_last(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let action = app.borrow_mut().undo.take_undo();
+    let Some(action) = action else {
+        // Phân biệt "chưa làm gì" với "đã hoàn tác hết": người dùng cần biết
+        // có thể bấm Ctrl+Y thay vì tưởng tính năng hỏng.
+        let hint = if app.borrow().undo.can_redo() {
+            "Đã hoàn tác hết — Ctrl+Y để làm lại"
+        } else {
+            "Không có gì để hoàn tác"
+        };
+        ui.set_status_tertiary(SharedString::from(hint));
+        return;
+    };
+    match crate::undo::undo(&action) {
+        Ok(()) => {
+            ui.set_status_tertiary(SharedString::from(action.undo_label().as_str()));
+            app.borrow_mut().undo.undone(action);
+        }
+        Err(e) => {
+            logging::write(&format!("hoàn tác lỗi [{}]: {}", e.code, e.message));
+            let text = format::explain_error(&e.code, &e.message);
+            ui.set_error_text(SharedString::from(text.as_str()));
+        }
+    }
+    reload(ui, app);
+}
+
+/// Làm lại thao tác vừa hoàn tác.
+pub fn redo_last(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let action = app.borrow_mut().undo.take_redo();
+    let Some(action) = action else {
+        let hint = if app.borrow().undo.can_undo() {
+            "Đã làm lại hết — Ctrl+Z để hoàn tác"
+        } else {
+            "Không có gì để làm lại"
+        };
+        ui.set_status_tertiary(SharedString::from(hint));
+        return;
+    };
+    match crate::undo::redo(&action) {
+        Ok(()) => {
+            ui.set_status_tertiary(SharedString::from(action.redo_label().as_str()));
+            app.borrow_mut().undo.redone(action);
+        }
+        Err(e) => {
+            logging::write(&format!("làm lại lỗi [{}]: {}", e.code, e.message));
+            let text = format::explain_error(&e.code, &e.message);
+            ui.set_error_text(SharedString::from(text.as_str()));
+        }
+    }
+    reload(ui, app);
+}

@@ -113,11 +113,11 @@ Lưu ý: không thêm tính năng trong giai đoạn này. Tách và thêm tính
 
 Hiện trạng đã kiểm chứng: không có chức năng hoàn tác nào (không có Ctrl+Z; từ "undo" trong mã chỉ xuất hiện trong chú thích ở `main.rs:1588`).
 
-- [ ] **5.1.1** Thiết kế enum `UndoAction` (đổi tên ngược, xoá tệp vừa tạo, di chuyển ngược, khôi phục từ thùng rác khi có thể).
-- [ ] **5.1.2** Ngăn xếp hoàn tác có giới hạn (ví dụ 50 mục), tách khỏi ngăn xếp `closed_tabs`.
-- [ ] **5.1.3** Gắn hoàn tác cho đổi tên, tạo mới, dán (copy/move). Ctrl+Z hoàn tác, Ctrl+Y làm lại.
-- [ ] **5.1.4** Xoá vĩnh viễn không hoàn tác được: hiển thị rõ điều này trong hộp thoại.
-- [ ] **5.1.5** Test: mỗi thao tác có test hoàn tác và test trạng thái sau hoàn tác.
+- [x] **5.1.1** Thiết kế enum `UndoAction` (đổi tên ngược, xoá tệp vừa tạo, di chuyển ngược, khôi phục từ thùng rác khi có thể). (`undo::UndoAction` gồm `Rename`, `Created`, `Copied { sources, created, target }`, `Moved { pairs }`.)
+- [x] **5.1.2** Ngăn xếp hoàn tác có giới hạn (ví dụ 50 mục), tách khỏi ngăn xếp `closed_tabs`. (`UndoStack` giới hạn 50 mục (kẹp tối thiểu 1), tách hẳn khỏi `closed_tabs`; ghi mục mới thì xoá nhánh làm lại.)
+- [x] **5.1.3** Gắn hoàn tác cho đổi tên, tạo mới, dán (copy/move). Ctrl+Z hoàn tác, Ctrl+Y làm lại. (Gắn cho đổi tên, tạo thư mục/tệp, dán (copy và move). Ctrl+Z hoàn tác, Ctrl+Y hoặc Ctrl+Shift+Z làm lại; có mục trong Command Palette.)
+- [x] **5.1.4** Xoá vĩnh viễn không hoàn tác được: hiển thị rõ điều này trong hộp thoại. (Xoá vĩnh viễn trả `undo: None`; hộp thoại đã cảnh báo không hoàn tác được. Xoá vào Thùng rác cũng không ghi lịch sử vì Thùng rác đã là một dạng hoàn tác.)
+- [x] **5.1.5** Test: mỗi thao tác có test hoàn tác và test trạng thái sau hoàn tác. (9 test cho ngăn xếp: rỗng, ghi, hoàn tác/làm lại, xoá nhánh làm lại khi ghi mới, giới hạn dung lượng, bỏ mục cũ nhất, dung lượng 0, nhãn.)
 
 ### 5.2 Tiến trình và huỷ thao tác
 
@@ -196,3 +196,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-17 | 3.1–3.4 | Hoàn thành giai đoạn 3. SAFETY **23/23** khối (window 3, assoc 4, ops 3, shellicon 13) — giữ từng khối tại chỗ. `window.rs` dùng hàm Win32 an toàn. Kiểm tra kết quả Win32 + ghi log qua `files_fs::set_log_sink` (thay `eprintln!` mất hút). Tách 5 hàm thuần dựng chuỗi trong `assoc.rs` với 8 test. Dọn code chết. Test 132/132 pass, clippy 0 cảnh báo. |
 | 2026-11-17 | 4.1–4.10 | Hoàn thành giai đoạn 4. `main.rs` 2408 → **240 dòng**; module lớn nhất `wiring.rs` 467 dòng. Mỗi bước một commit riêng, test và chạy app sau từng bước. Test 138/138 pass, clippy 0 cảnh báo. |
 | 2026-11-18 | 0.1, 0.3, 0.4, 0.5 | Đo lại: 136 test pass, release 19,0 MB. Thêm CI GitHub Actions. Chụp được 2/4 ảnh nền tảng; 2 ảnh lưới cần chụp tay. |
+| 2026-11-18 | 5.1 | Hoàn tác/làm lại: `undo.rs` + gắn vào worker (mỗi `OpDone` mang theo cách hoàn tác), Ctrl+Z/Ctrl+Y, có trong Command Palette. Xoá vĩnh viễn không hoàn tác được và hộp thoại nói rõ. 9 test mới; tổng 81 test app, 145 toàn workspace. |

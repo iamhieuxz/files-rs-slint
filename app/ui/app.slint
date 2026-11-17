@@ -225,6 +225,13 @@ export component AppWindow inherits Window {
                 }
                 if (event.text == "x") { root.command("cut"); return accept; }
                 if (event.text == "v") { root.command("paste"); return accept; }
+                // Ctrl+Z hoàn tác, Ctrl+Shift+Z hoặc Ctrl+Y làm lại.
+                if (event.text == "z") {
+                    if (event.modifiers.shift) { root.command("redo"); }
+                    else { root.command("undo"); }
+                    return accept;
+                }
+                if (event.text == "y") { root.command("redo"); return accept; }
                 if (event.text == "a") { root.command("select-all"); return accept; }
                 if (event.text == "h") { root.command("toggle-hidden"); return accept; }
                 if (event.text == "f") { root.start-filter(); return accept; }

@@ -84,6 +84,8 @@ pub enum JobDone {
     OpDone {
         label: String,
         result: Result<(), FsError>,
+        /// Cách hoàn tác, khi thao tác này hoàn tác được.
+        undo: Option<crate::undo::UndoAction>,
     },
     /// A folder's total size, so the UI can fill the size column in place.
     /// `token` identifies the directory listing that asked for it.
@@ -196,54 +198,85 @@ fn run(job: Job) -> JobDone {
             JobDone::Loaded { token, path, result }
         }
         Job::Copy { sources, target } => {
-            let (done, err) = run_batch(&sources, |src| files_fs::copy_into(src, &target));
+            let (created, err) = run_batch(&sources, |src| files_fs::copy_into(src, &target));
             let label = match &err {
                 Some(e) => format!("Sao chép lỗi: {}", e.message),
-                None => format!("Đã sao chép {done}/{} mục", sources.len()),
+                None => format!("Đã sao chép {}/{} mục", created.len(), sources.len()),
             };
-            JobDone::OpDone { label, result: err.map_or(Ok(()), Err) }
+            let undo = created.is_empty().then_some(()).map_or(
+                Some(crate::undo::UndoAction::Copied {
+                    sources: sources.clone(),
+                    created,
+                    target,
+                }),
+                |_| None,
+            );
+            JobDone::OpDone { label, result: err.map_or(Ok(()), Err), undo }
         }
         Job::Move { sources, target } => {
-            let (done, err) = run_batch(&sources, |src| files_fs::move_into(src, &target));
+            let (created, err) = run_batch(&sources, |src| files_fs::move_into(src, &target));
             let label = match &err {
                 Some(e) => format!("Di chuyển lỗi: {}", e.message),
-                None => format!("Đã di chuyển {done}/{} mục", sources.len()),
+                None => format!("Đã di chuyển {}/{} mục", created.len(), sources.len()),
             };
-            JobDone::OpDone { label, result: err.map_or(Ok(()), Err) }
+            // Ghép nguồn với đích theo đúng thứ tự đã di chuyển thành công.
+            let pairs: Vec<(PathBuf, PathBuf)> =
+                sources.iter().cloned().zip(created.iter().cloned()).collect();
+            let undo = if pairs.is_empty() {
+                None
+            } else {
+                Some(crate::undo::UndoAction::Moved { pairs })
+            };
+            JobDone::OpDone { label, result: err.map_or(Ok(()), Err), undo }
         }
         Job::Delete { paths } => {
             let n = paths.len();
             match files_fs::delete_to_recycle_bin(&paths) {
+                // Thùng rác đã là một dạng hoàn tác; không chồng thêm bản ghi.
                 Ok(count) => JobDone::OpDone {
                     label: format!("Đã chuyển {count}/{n} mục vào Thùng rác"),
                     result: Ok(()),
+                    undo: None,
                 },
                 Err(e) => JobDone::OpDone {
                     label: format!("Xoá lỗi: {}", e.message),
                     result: Err(e),
+                    undo: None,
                 },
             }
         }
         Job::CreateFolder { parent, name } => {
-            let (label, result) = match files_fs::create_folder(&parent, &name) {
-                Ok(p) => (format!("Đã tạo thư mục {}", file_label(&p)), Ok(())),
-                Err(e) => (format!("Tạo thư mục lỗi: {}", e.message), Err(e)),
+            let (label, result, undo) = match files_fs::create_folder(&parent, &name) {
+                Ok(p) => (
+                    format!("Đã tạo thư mục {}", file_label(&p)),
+                    Ok(()),
+                    Some(crate::undo::UndoAction::Created { path: p, is_dir: true }),
+                ),
+                Err(e) => (format!("Tạo thư mục lỗi: {}", e.message), Err(e), None),
             };
-            JobDone::OpDone { label, result }
+            JobDone::OpDone { label, result, undo }
         }
         Job::CreateFile { parent, name } => {
-            let (label, result) = match files_fs::create_file(&parent, &name) {
-                Ok(p) => (format!("Đã tạo tệp {}", file_label(&p)), Ok(())),
-                Err(e) => (format!("Tạo tệp lỗi: {}", e.message), Err(e)),
+            let (label, result, undo) = match files_fs::create_file(&parent, &name) {
+                Ok(p) => (
+                    format!("Đã tạo tệp {}", file_label(&p)),
+                    Ok(()),
+                    Some(crate::undo::UndoAction::Created { path: p, is_dir: false }),
+                ),
+                Err(e) => (format!("Tạo tệp lỗi: {}", e.message), Err(e), None),
             };
-            JobDone::OpDone { label, result }
+            JobDone::OpDone { label, result, undo }
         }
         Job::Rename { from, to } => {
-            let (label, result) = match files_fs::rename(&from, &to) {
-                Ok(p) => (format!("Đã đổi tên thành {}", file_label(&p)), Ok(())),
-                Err(e) => (format!("Đổi tên lỗi: {}", e.message), Err(e)),
+            let (label, result, undo) = match files_fs::rename(&from, &to) {
+                Ok(p) => (
+                    format!("Đã đổi tên thành {}", file_label(&p)),
+                    Ok(()),
+                    Some(crate::undo::UndoAction::Rename { from, to: p }),
+                ),
+                Err(e) => (format!("Đổi tên lỗi: {}", e.message), Err(e), None),
             };
-            JobDone::OpDone { label, result }
+            JobDone::OpDone { label, result, undo }
         }
         Job::Zip { sources, dest } => {
             let (label, result) = match files_fs::create_zip(&sources, &dest) {
@@ -253,7 +286,7 @@ fn run(job: Job) -> JobDone {
                 ),
                 Err(e) => (format!("Nén lỗi: {}", e.message), Err(e)),
             };
-            JobDone::OpDone { label, result }
+            JobDone::OpDone { label, result, undo: None }
         }
         Job::Unzip { archive, target } => {
             let (label, result) = match files_fs::extract_zip(&archive, &target) {
@@ -263,14 +296,14 @@ fn run(job: Job) -> JobDone {
                 ),
                 Err(e) => (format!("Giải nén lỗi: {}", e.message), Err(e)),
             };
-            JobDone::OpDone { label, result }
+            JobDone::OpDone { label, result, undo: None }
         }
         Job::Hash { path, kind } => {
             let (label, result) = match files_fs::hash_file(&path, kind) {
                 Ok(digest) => (format!("{}: {digest}", kind.label()), Ok(())),
                 Err(e) => (format!("Tính mã băm lỗi: {}", e.message), Err(e)),
             };
-            JobDone::OpDone { label, result }
+            JobDone::OpDone { label, result, undo: None }
         }
         Job::FolderSize { path } => {
             // Explicit "tính kích thước" from the menu; token 0 never matches a
@@ -281,13 +314,16 @@ fn run(job: Job) -> JobDone {
         Job::DeletePermanent { paths } => {
             let n = paths.len();
             match files_fs::delete_permanently(&paths) {
+                // Xoá vĩnh viễn KHÔNG hoàn tác được; hộp thoại đã cảnh báo.
                 Ok(count) => JobDone::OpDone {
                     label: format!("Đã xoá vĩnh viễn {count}/{n} mục"),
                     result: Ok(()),
+                    undo: None,
                 },
                 Err(e) => JobDone::OpDone {
                     label: format!("Xoá vĩnh viễn lỗi: {}", e.message),
                     result: Err(e),
+                    undo: None,
                 },
             }
         }
@@ -295,15 +331,16 @@ fn run(job: Job) -> JobDone {
 }
 
 /// Apply `op` to each source, counting successes and keeping the first error.
-fn run_batch<F>(sources: &[PathBuf], mut op: F) -> (usize, Option<FsError>)
+fn run_batch<F>(sources: &[PathBuf], mut op: F) -> (Vec<PathBuf>, Option<FsError>)
 where
     F: FnMut(&PathBuf) -> Result<PathBuf, FsError>,
 {
-    let mut done = 0usize;
+    // Trả về cả đường dẫn đích: hoàn tác cần biết chính xác cái gì đã được tạo.
+    let mut created = Vec::new();
     let mut first_err = None;
     for src in sources {
         match op(src) {
-            Ok(_) => done += 1,
+            Ok(dest) => created.push(dest),
             Err(e) => {
                 if first_err.is_none() {
                     first_err = Some(e);
@@ -311,7 +348,7 @@ where
             }
         }
     }
-    (done, first_err)
+    (created, first_err)
 }
 
 fn file_label(p: &std::path::Path) -> String {

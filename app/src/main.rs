@@ -27,6 +27,7 @@ mod settings;
 mod selection;
 mod state;
 mod tabs;
+mod undo;
 mod navigation;
 mod view;
 mod tags;
@@ -96,6 +97,7 @@ fn main() -> Result<(), slint::PlatformError> {
         tag_path: tag_store_path(),
         settings: saved,
         settings_path,
+        undo: Default::default(),
     }));
 
     build_sidebar(&ui);

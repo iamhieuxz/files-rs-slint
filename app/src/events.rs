@@ -61,12 +61,16 @@ pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                         }
                     }
                 }
-                Ok(JobDone::OpDone { label, result }) => {
+                Ok(JobDone::OpDone { label, result, undo }) => {
                     ui.set_busy(false);
                     ui.set_busy_text(SharedString::default());
                     match result {
                         Ok(()) => {
                             ui.set_status_tertiary(SharedString::from(label.as_str()));
+                            // Chỉ ghi lịch sử khi thao tác thật sự thành công.
+                            if let Some(action) = undo {
+                                a.borrow_mut().undo.record(action);
+                            }
                             // Sau khi di chuyển, nguồn đã biến mất nên clipboard
                             // phải rỗng; dán lại sẽ báo lỗi không tìm thấy.
                             if a.borrow().clipboard_cut {

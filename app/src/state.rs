@@ -119,6 +119,8 @@ pub struct App {
     /// Giao diện đang dùng, ghi lại sau mỗi thay đổi để lần sau mở đúng như cũ.
     pub settings: settings::Settings,
     pub settings_path: PathBuf,
+    /// Lịch sử hoàn tác cho các thao tác tệp.
+    pub undo: crate::undo::UndoStack,
 }
 
 impl App {
