@@ -185,13 +185,10 @@ mod tests {
             return;
         }
         let before = LIVE.with(|l| l.borrow().len());
-        match open(std::path::PathBuf::from("C:\\")) {
-            Ok(()) => {
-                let after = LIVE.with(|l| l.borrow().len());
-                assert_eq!(after, before + 1, "cửa sổ mới phải nằm trong danh sách");
-            }
-            // Không tạo được cửa sổ trong môi trường test: chấp nhận.
-            Err(_) => {}
+        // Không tạo được cửa sổ trong môi trường test: chấp nhận.
+        if open(std::path::PathBuf::from("C:\\")).is_ok() {
+            let after = LIVE.with(|l| l.borrow().len());
+            assert_eq!(after, before + 1, "cửa sổ mới phải nằm trong danh sách");
         }
     }
 
