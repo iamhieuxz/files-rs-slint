@@ -85,17 +85,17 @@ Mục tiêu: giảm `main.rs` từ 2526 dòng xuống dưới ~400 dòng, mỗi 
 
 Thứ tự tách, từ ít phụ thuộc đến nhiều phụ thuộc:
 
-- [ ] **4.1** Tách `state.rs`: định nghĩa struct trạng thái ứng dụng (tab, lựa chọn, clipboard, cờ `load_in_flight`), không có callback.
-- [ ] **4.2** Tách `tabs.rs`: mở, đóng, nhân bản, chuyển tab, mở lại tab đã đóng, menu đóng nhóm.
+- [x] **4.1** Tách `state.rs`: định nghĩa struct trạng thái ứng dụng (tab, lựa chọn, clipboard, cờ `load_in_flight`), không có callback. (`state.rs`: `Tab`, `App`, đường dẫn settings/tags, `persist_ui`, `apply_saved_ui`. 4 test cho lọc và lựa chọn.)
+- [x] **4.2** Tách `tabs.rs`: mở, đóng, nhân bản, chuyển tab, mở lại tab đã đóng, menu đóng nhóm. (`tabs.rs`: mở/đóng/nhân bản/chuyển tab, `close_index_result` + 7 test giữ nguyên.)
   - Giữ `close_index_result` và các test hiện có.
-- [ ] **4.3** Tách `navigation.rs`: back/forward/up, omnibar, điều hướng đến đường dẫn, sidebar.
-- [ ] **4.4** Tách `selection.rs`: chọn đơn, Ctrl, Shift, chọn tất cả, lọc nhanh.
-- [ ] **4.5** Tách `file_ops.rs`: tạo, đổi tên, copy, cut, paste, xoá, xoá vĩnh viễn. Đây là nơi sẽ gắn hoàn tác ở giai đoạn 5.
-- [ ] **4.6** Tách `dialogs.rs`: trạng thái và xác nhận hộp thoại (tạo, đổi tên, xoá vĩnh viễn).
-- [ ] **4.7** Tách `commands.rs`: bảng 29 lệnh Command Palette và ánh xạ phím tắt. Thay chuỗi `match` bằng bảng dữ liệu (`&[Command { id, label, shortcut, action }]`).
-- [ ] **4.8** Tách `wiring.rs` (hoặc `callbacks.rs`): chỉ đăng ký callback Slint, mỗi callback gọi một hàm trong module nghiệp vụ.
-- [ ] **4.9** Tách `events.rs`: hai bơm sự kiện (kết quả nền và watcher).
-- [ ] **4.10** Dọn `main.rs` còn lại: khởi tạo, đọc settings, chạy event loop.
+- [x] **4.3** Tách `navigation.rs`: back/forward/up, omnibar, điều hướng đến đường dẫn, sidebar. (`view.rs`: `push_view`, `push_status`, `sync_tabs`, theme, icon, ô kích thước. Test `grid_columns` chuyển theo.)
+- [x] **4.4** Tách `selection.rs`: chọn đơn, Ctrl, Shift, chọn tất cả, lọc nhanh. (`navigation.rs`: `reload`, `apply_listing`, `navigate_to`, `open_row`, `build_sidebar`.)
+- [x] **4.5** Tách `file_ops.rs`: tạo, đổi tên, copy, cut, paste, xoá, xoá vĩnh viễn. Đây là nơi sẽ gắn hoàn tác ở giai đoạn 5. (`selection.rs`: `select_row`, cờ lựa chọn, `move_selection`.)
+- [x] **4.6** Tách `dialogs.rs`: trạng thái và xác nhận hộp thoại (tạo, đổi tên, xoá vĩnh viễn). (`file_ops.rs`: clipboard, dán, nén, giải nén, băm, kích thước thư mục.)
+- [x] **4.7** Tách `commands.rs`: bảng 29 lệnh Command Palette và ánh xạ phím tắt. Thay chuỗi `match` bằng bảng dữ liệu (`&[Command { id, label, shortcut, action }]`). (`dialogs.rs`: tạo/đổi tên/xoá/thuộc tính và phần xác nhận.)
+- [x] **4.8** Tách `wiring.rs` (hoặc `callbacks.rs`): chỉ đăng ký callback Slint, mỗi callback gọi một hàm trong module nghiệp vụ. (`commands.rs`: bảng lệnh, `run_command`, menu, menu thẻ, đăng ký hiệp hội tệp.)
+- [x] **4.9** Tách `events.rs`: hai bơm sự kiện (kết quả nền và watcher). (`wiring.rs`: toàn bộ callback Slint (467 dòng, dưới ngưỡng 800).)
+- [x] **4.10** Dọn `main.rs` còn lại: khởi tạo, đọc settings, chạy event loop. (`events.rs`: hai bơm sự kiện. `main.rs` còn 240 dòng: khởi tạo + test.)
 
 Tiêu chí hoàn thành:
 - `main.rs` dưới ~400 dòng;
@@ -194,3 +194,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-17 | 0.2, 2.1–2.4 | Clippy 0 cảnh báo. `Worker::spawn` trả `io::Result`, bỏ `expect`. Bỏ `unwrap` trong `sort.rs`. Bật `deny(unwrap_used, expect_used)` cho code production. Test 69/69 pass. |
 | 2026-11-17 | 0 (một phần) | Chạy `cargo test --workspace`: pass. Build release: pass. Hiệu chỉnh lại kế hoạch theo số liệu đo được: unwrap production 46 → 4; tính năng undo, thumbnail, sidebar pin, accessibility xác nhận chưa có |
 | 2026-11-17 | 3.1–3.4 | Hoàn thành giai đoạn 3. SAFETY **23/23** khối (window 3, assoc 4, ops 3, shellicon 13) — giữ từng khối tại chỗ. `window.rs` dùng hàm Win32 an toàn. Kiểm tra kết quả Win32 + ghi log qua `files_fs::set_log_sink` (thay `eprintln!` mất hút). Tách 5 hàm thuần dựng chuỗi trong `assoc.rs` với 8 test. Dọn code chết. Test 132/132 pass, clippy 0 cảnh báo. |
+| 2026-11-17 | 4.1–4.10 | Hoàn thành giai đoạn 4. `main.rs` 2408 → **240 dòng**; module lớn nhất `wiring.rs` 467 dòng. Mỗi bước một commit riêng, test và chạy app sau từng bước. Test 138/138 pass, clippy 0 cảnh báo. |
