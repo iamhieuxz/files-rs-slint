@@ -4,6 +4,8 @@
 //! (`files-fs`) produces these values and the shell renders them, which keeps
 //! the rules testable without a running app.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod entry;
 pub mod error;
 pub mod path;

@@ -65,12 +65,12 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
             (None, None) => return Ordering::Equal,
             (None, Some(_)) => return Ordering::Less,
             (Some(_), None) => return Ordering::Greater,
-            (Some((_, ac)), Some((_, bc))) => {
+            (Some((a_at, ac)), Some((b_at, bc))) => {
                 if ac.is_ascii_digit() && bc.is_ascii_digit() {
                     // Compare the full numeric run by value, then by length so
                     // that equal values keep a stable, deterministic order.
-                    let (an, a_len) = take_number(a, ai.peek().unwrap().0);
-                    let (bn, b_len) = take_number(b, bi.peek().unwrap().0);
+                    let (an, a_len) = take_number(a, a_at);
+                    let (bn, b_len) = take_number(b, b_at);
                     let ord = an.cmp(&bn).then(a_len.cmp(&b_len));
                     if ord != Ordering::Equal {
                         return ord;

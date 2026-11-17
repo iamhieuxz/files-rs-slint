@@ -23,8 +23,7 @@ pub fn wire(ui: &crate::AppWindow) {
             let Some(ui) = w.upgrade() else { return };
             ui.window().with_winit_window(|win| {
                 if let Some(hwnd) = hwnd_of(win) {
-                    // SW_MINIMIZE = 6
-                    let _ = unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+                    minimize(hwnd);
                 }
             });
         });
@@ -36,11 +35,7 @@ pub fn wire(ui: &crate::AppWindow) {
             let Some(ui) = w.upgrade() else { return };
             ui.window().with_winit_window(|win| {
                 if let Some(hwnd) = hwnd_of(win) {
-                    // SW_MAXIMIZE = 3, SW_RESTORE = 9
-                    let maximized = unsafe { IsZoomed(hwnd) }.as_bool();
-                    unsafe {
-                        let _ = ShowWindow(hwnd, if maximized { SW_RESTORE } else { SW_MAXIMIZE });
-                    }
+                    set_maximized(hwnd, !is_zoomed(hwnd));
                 }
             });
         });
@@ -51,7 +46,9 @@ pub fn wire(ui: &crate::AppWindow) {
         ui.on_window_close(move || {
             let Some(ui) = w.upgrade() else { return };
             // Slint owns the loop; asking it to hide is the clean exit path.
-            let _ = ui.hide();
+            if let Err(e) = ui.hide() {
+                crate::logging::write(&format!("không ẩn được cửa sổ: {e}"));
+            }
         });
     }
 
@@ -70,7 +67,8 @@ pub fn wire(ui: &crate::AppWindow) {
             // "không tương tác được".
             ui.window().with_winit_window(|win| {
                 if let Err(e) = win.drag_window() {
-                    eprintln!("[window] drag_window lỗi: {e}");
+                    // Không có console nên `eprintln!` sẽ mất hút.
+                    crate::logging::write(&format!("drag_window lỗi: {e}"));
                 }
             });
         });
@@ -94,6 +92,35 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsZoomed, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
 };
 
+// Toàn bộ `unsafe` của cửa sổ nằm trong ba hàm dưới đây. Điều kiện chung:
+// `hwnd` lấy từ `hwnd_of` (cửa sổ winit đang sống, trên luồng UI). Win32 chỉ
+// đọc hoặc đổi trạng thái cửa sổ; handle sai thì hàm trả lỗi/không làm gì,
+// không gây UB.
+
+/// Thu nhỏ cửa sổ.
+#[cfg(windows)]
+fn minimize(hwnd: HWND) {
+    // SAFETY: xem khối chú thích trên. ShowWindow chỉ đổi trạng thái cửa sổ.
+    // Giá trị BOOL trả về là trạng thái hiển thị trước đó, không phải lỗi,
+    // nên bỏ qua là có chủ ý.
+    let _ = unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+}
+
+/// Phóng to hoặc khôi phục cửa sổ (`true` = phóng to).
+#[cfg(windows)]
+fn set_maximized(hwnd: HWND, maximize: bool) {
+    let cmd = if maximize { SW_MAXIMIZE } else { SW_RESTORE };
+    // SAFETY: xem khối chú thích trên. Giá trị BOOL là trạng thái trước đó.
+    let _ = unsafe { ShowWindow(hwnd, cmd) };
+}
+
+/// Cửa sổ đang phóng to hay không. Dùng cho nút và cho quyết định toggle.
+#[cfg(windows)]
+fn is_zoomed(hwnd: HWND) -> bool {
+    // SAFETY: xem khối chú thích trên. IsZoomed chỉ đọc trạng thái.
+    unsafe { IsZoomed(hwnd) }.as_bool()
+}
+
 /// Non-Windows builds keep the callbacks but do nothing, so the UI still builds.
 #[cfg(not(windows))]
 pub fn wire(_ui: &crate::AppWindow) {}
@@ -116,7 +143,7 @@ pub fn install_state_poller(ui: &crate::AppWindow) {
             .window()
             .with_winit_window(|win| {
                 hwnd_of(win)
-                    .map(|h| unsafe { IsZoomed(h) }.as_bool())
+                    .map(is_zoomed)
                     .unwrap_or(false)
             })
             .unwrap_or(false);

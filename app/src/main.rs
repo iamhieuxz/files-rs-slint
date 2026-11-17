@@ -1,8 +1,18 @@
 // Không mở cửa sổ console: app gốc không có console. Thuộc tính phải đứng
 // trước mọi item khác, nên đặt ngay đầu tệp.
 #![cfg_attr(windows, windows_subsystem = "windows")]
-
-slint::include_modules!();
+// Code production không được `unwrap`/`expect`: lỗi phải đi qua `Result`.
+// Test được phép dùng (cfg(test) không bị ảnh hưởng).
+// Mã do Slint sinh ra nằm ngoài lint này: xem `allow` trên `include_modules`.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+// Code production không được `unwrap`/`expect`: lỗi phải đi qua `Result` và
+// hiển thị cho người dùng. Test được phép dùng (cfg(test) không bị ảnh hưởng).
+// Mã do Slint sinh ra dùng `unwrap` nội bộ; nằm ngoài lint của mình.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod slint_generated {
+    slint::include_modules!();
+}
+use slint_generated::*;
 
 mod format;
 mod history;
@@ -145,6 +155,8 @@ impl App {
 fn main() -> Result<(), slint::PlatformError> {
     // Không có console nên stderr mất hút; ghi log ra tệp để còn chẩn đoán.
     logging::install_panic_hook();
+    // `files-fs` không tự biết ghi log ở đâu; cài sink để lỗi Win32 không mất.
+    files_fs::set_log_sink(logging::write);
     logging::write(&format!(
         "khởi động, log tại {:?}",
         logging::log_path()
@@ -160,7 +172,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let settings_path = settings_path();
     let saved = settings::Settings::load(&settings_path);
 
-    let (worker, results) = Worker::spawn();
+    // Không tạo được luồng nền thì app không thể hoạt động: báo lỗi và thoát
+    // bằng `?`, không panic.
+    let (worker, results) = Worker::spawn().map_err(|e| {
+        slint::PlatformError::Other(format!("Không tạo được luồng nền: {e}"))
+    })?;
     let app = Rc::new(RefCell::new(App {
         tabs: vec![Tab::new(home.clone())],
         active: 0,
@@ -1165,11 +1181,10 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         });
     }
     {
-        let w = ui.as_weak();
-        ui.on_sidebar_toggled(move |_id| {
-            let Some(ui) = w.upgrade() else { return };
-            let _ = &ui;
-        });
+        // Mọi `NavEntry` hiện đặt `expandable: false`, nên chưa có mục con nào
+        // để mở/đóng. Giữ callback để UI biên dịch được, nhưng không giả vờ
+        // xử lý: khi thêm nhóm thư mục (ghim sidebar) thì cài đặt ở đây.
+        ui.on_sidebar_toggled(|_id| {});
     }
 }
 
@@ -1374,8 +1389,8 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "paste" => do_paste(ui, app),
         "delete" => ask_delete(ui, app),
         "rename" => ask_rename(ui, app),
-        "new-folder" => ask_new(ui, app, "new-folder"),
-        "new-file" => ask_new(ui, app, "new-file"),
+        "new-folder" => ask_new(ui, "new-folder"),
+        "new-file" => ask_new(ui, "new-file"),
         "new-menu" => show_new_menu(ui, 12.0, 40.0),
         "select-all" => {
             {
@@ -1650,7 +1665,9 @@ fn register_association(ui: &AppWindow) {
             ui.set_status_tertiary(SharedString::from(
                 "Đã đăng ký. Chọn Files RS trong trang Settings vừa mở.",
             ));
-            let _ = files_fs::open_settings_page();
+            if let Err(e) = files_fs::open_settings_page() {
+                logging::write(&format!("không mở được trang Settings: {}", e.message));
+            }
         }
         Err(e) => ui.set_error_text(SharedString::from(e.message.as_str())),
     }
@@ -2015,8 +2032,7 @@ fn ask_rename(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.set_dialog_open(true);
 }
 
-fn ask_new(ui: &AppWindow, app: &Rc<RefCell<App>>, kind: &str) {
-    let _ = app;
+fn ask_new(ui: &AppWindow, kind: &str) {
     let (title, placeholder, label) = if kind == "new-folder" {
         ("Thư mục mới", "Thư mục mới", "Tạo")
     } else {
@@ -2374,7 +2390,7 @@ mod tests {
         // Đúng đường đi của hộp thoại: dialog gửi Job, worker chạy, đĩa đổi.
         // Test này bắt được lỗi "bấm Tạo mà không có gì xảy ra".
         let root = scratch("worker-create");
-        let (worker, rx) = Worker::spawn();
+        let (worker, rx) = Worker::spawn().expect("tạo luồng worker cho test");
 
         worker.submit(Job::CreateFolder {
             parent: root.clone(),
@@ -2405,7 +2421,7 @@ mod tests {
     fn an_empty_name_still_creates_a_folder() {
         // Hộp thoại cho bấm "Tạo" khi ô trống; Rust tự đặt tên.
         let root = scratch("worker-empty-name");
-        let (worker, rx) = Worker::spawn();
+        let (worker, rx) = Worker::spawn().expect("tạo luồng worker cho test");
         worker.submit(Job::CreateFolder {
             parent: root.clone(),
             name: String::new(),
@@ -2425,7 +2441,7 @@ mod tests {
         // luồng, nên một icon chậm làm mọi lệnh tạo/đổi tên sau đó đứng im.
         // Xếp 300 icon trước, rồi gửi lệnh tạo: lệnh tạo vẫn phải xong nhanh.
         let root = scratch("worker-not-blocked");
-        let (worker, rx) = Worker::spawn();
+        let (worker, rx) = Worker::spawn().expect("tạo luồng worker cho test");
 
         let exe = std::env::current_exe().expect("đường dẫn exe");
         for _ in 0..300 {

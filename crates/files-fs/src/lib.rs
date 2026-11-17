@@ -3,10 +3,13 @@
 //! This crate is the only place that talks to the OS. It produces the pure
 //! values defined in `files-core`, so the rest of the app stays testable.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod archive;
 pub mod assoc;
 pub mod drives;
 pub mod listing;
+pub mod log;
 pub mod ops;
 pub mod shellicon;
 pub mod watch;
@@ -14,6 +17,7 @@ pub mod watch;
 pub use assoc::{open_settings_page, register as register_file_assoc, unregister as unregister_file_assoc};
 pub use archive::{archive_name, create_zip, extract_zip, hash_file, HashKind};
 pub use drives::{list_drives, DriveInfo};
+pub use log::set_log_sink;
 pub use listing::read_dir;
 pub use shellicon::{shell_icon, wants_shell_icon, RgbaIcon};
 pub use ops::{

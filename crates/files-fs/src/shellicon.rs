@@ -83,12 +83,54 @@ fn ensure_com() {
         if done.get() {
             return;
         }
-        // SAFETY: pairing every successful CoInitializeEx with an uninit would
-        // be wrong here — the thread outlives the call and the worker keeps
-        // using the Shell, so COM stays initialised for the thread's lifetime.
+        // SAFETY: `None` là con trỏ null hợp lệ cho tham số reserved. Không
+        // gọi `CoUninitialize` là có chủ ý: luồng sống lâu hơn lời gọi và tiếp
+        // tục dùng Shell, nên COM phải ở trạng thái đã khởi tạo suốt đời luồng.
+        // Mã trả về bị bỏ qua vì `RPC_E_CHANGED_MODE` (COM đã khởi tạo theo mô
+        // hình khác) vẫn dùng được cho `SHGetFileInfoW`.
         let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         done.set(true);
     });
+}
+
+/// Xoá một handle GDI, bỏ qua handle rỗng.
+///
+/// Đây là chỗ duy nhất gọi `DeleteObject` trong tệp. Gộp lại để `unsafe` không
+/// rải khắp mười nhánh lỗi, và để mọi lần rò handle đều đi qua log.
+#[cfg(windows)]
+fn delete_gdi(handle: windows::Win32::Graphics::Gdi::HGDIOBJ) {
+    if handle.0.is_null() {
+        return;
+    }
+    // SAFETY: `handle` do chính hàm gọi tạo ra qua `GetIconInfo`/`GetObjectW`,
+    // và mỗi handle chỉ được xoá đúng một lần. `DeleteObject` không truy cập
+    // bộ nhớ của tiến trình gọi.
+    let ok = unsafe { windows::Win32::Graphics::Gdi::DeleteObject(handle) };
+    if !ok.as_bool() {
+        crate::log::warn("DeleteObject thất bại: handle GDI có thể đã bị xoá");
+    }
+}
+
+/// Giải phóng device context tạo bởi `CreateCompatibleDC`.
+#[cfg(windows)]
+fn delete_dc(dc: windows::Win32::Graphics::Gdi::HDC) {
+    if dc.is_invalid() {
+        return;
+    }
+    // SAFETY: `dc` do `CreateCompatibleDC` tạo trong cùng hàm và chỉ dùng để
+    // sao chép pixel; giải phóng đúng một lần.
+    let _ = unsafe { windows::Win32::Graphics::Gdi::DeleteDC(dc) };
+}
+
+/// Giải phóng icon lấy từ Shell.
+#[cfg(windows)]
+fn destroy_icon(icon: windows::Win32::UI::WindowsAndMessaging::HICON) {
+    if icon.is_invalid() {
+        return;
+    }
+    // SAFETY: `icon` đến từ `SHGetFileInfoW` với cờ `SHGFI_ICON`, thuộc sở hữu
+    // của bên gọi, và chỉ được huỷ một lần ở đây.
+    let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyIcon(icon) };
 }
 
 /// Read the Shell's icon for `path` at `size` pixels.
@@ -112,13 +154,13 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
+        CreateCompatibleDC, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
     };
     use windows::Win32::UI::Shell::{
         SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_LARGEICON,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
+    use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, ICONINFO};
 
     // The Shell refuses to hand out icons on a thread that never initialised
     // COM. Skipping this makes `SHGetFileInfoW` return 0 *intermittently*,
@@ -165,7 +207,7 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         let hbm = icon_info.hbmColor;
         if hbm.is_invalid() {
             if !icon_info.hbmMask.is_invalid() {
-                let _ = unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) };
+                delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
             }
             return Ok(None);
         }
@@ -180,16 +222,16 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
             )
         };
         if got == 0 {
-            let _ = unsafe { DeleteObject(HGDIOBJ(hbm.0)) };
-            let _ = unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) };
+            delete_gdi(HGDIOBJ(hbm.0));
+            delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
             return Ok(None);
         }
 
         let w = bmp.bmWidth as u32;
         let h = bmp.bmHeight as u32;
         if w == 0 || h == 0 {
-            let _ = unsafe { DeleteObject(HGDIOBJ(hbm.0)) };
-            let _ = unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) };
+            delete_gdi(HGDIOBJ(hbm.0));
+            delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
             return Ok(None);
         }
 
@@ -208,11 +250,13 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         };
 
         let mut buf = vec![0u8; (w * h * 4) as usize];
-        // SAFETY: the DC is only used for the DIB copy, and `buf` is sized for
-        // the requested dimensions.
+        // SAFETY: `None` là screen DC, hàm không truy cập bộ nhớ của ta và trả
+        // handle mà ta giải phóng ngay bên dưới.
+        let dc = unsafe { CreateCompatibleDC(None) };
+        // SAFETY: `hbm` là bitmap màu hợp lệ vừa đọc kích thước; `buf` đủ chỗ
+        // cho `w * h` điểm ảnh 32-bit; `bi` khai báo đúng chiều cao âm.
         let copied = unsafe {
-            let dc = CreateCompatibleDC(None);
-            let n = GetDIBits(
+            GetDIBits(
                 dc,
                 hbm,
                 0,
@@ -220,13 +264,12 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
                 Some(buf.as_mut_ptr() as *mut _),
                 &mut bi,
                 DIB_RGB_COLORS,
-            );
-            let _ = DeleteDC(dc);
-            n
+            )
         };
+        delete_dc(dc);
 
-        let _ = unsafe { DeleteObject(HGDIOBJ(hbm.0)) };
-        let _ = unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) };
+        delete_gdi(HGDIOBJ(hbm.0));
+        delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
 
         if copied == 0 {
             return Ok(None);
@@ -240,7 +283,7 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         Ok(Some(RgbaIcon { width: w, height: h, pixels: buf }))
     })();
 
-    let _ = unsafe { DestroyIcon(hicon) };
+    destroy_icon(hicon);
     result
 }
 

@@ -120,8 +120,11 @@ pub enum AuxJob {
 }
 
 impl Worker {
-    /// Spawn the worker thread and return the handle plus the result channel.
-    pub fn spawn() -> (Self, Receiver<JobDone>) {
+    /// Spawn the worker threads and return the handle plus the result channel.
+    ///
+    /// Fails only if the OS refuses to create a thread. The caller decides what
+    /// to do with that; this function never panics.
+    pub fn spawn() -> std::io::Result<(Self, Receiver<JobDone>)> {
         let (job_tx, job_rx) = channel::<Job>();
         let (done_tx, done_rx) = channel::<JobDone>();
         let main_done = done_tx.clone();
@@ -136,8 +139,7 @@ impl Worker {
                         break;
                     }
                 }
-            })
-            .expect("spawn worker thread");
+            })?;
 
         // Second thread, same result channel: decorations are independent of
         // operations, and one slow folder must not stall the other.
@@ -165,10 +167,9 @@ impl Worker {
                         break;
                     }
                 }
-            })
-            .expect("spawn background thread");
+            })?;
 
-        (Self { tx: job_tx, aux_tx }, done_rx)
+        Ok((Self { tx: job_tx, aux_tx }, done_rx))
     }
 
     pub fn submit(&self, job: Job) {
@@ -245,7 +246,6 @@ fn run(job: Job) -> JobDone {
             JobDone::OpDone { label, result }
         }
         Job::Zip { sources, dest } => {
-            let n = sources.len();
             let (label, result) = match files_fs::create_zip(&sources, &dest) {
                 Ok(count) => (
                     format!("Đã nén {count} tệp vào {}", file_label(&dest)),
@@ -253,7 +253,6 @@ fn run(job: Job) -> JobDone {
                 ),
                 Err(e) => (format!("Nén lỗi: {}", e.message), Err(e)),
             };
-            let _ = n;
             JobDone::OpDone { label, result }
         }
         Job::Unzip { archive, target } => {
