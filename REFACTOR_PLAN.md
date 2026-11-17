@@ -162,7 +162,7 @@ Sắp xếp theo giá trị với người dùng và độ phức tạp tăng d�
 - [ ] **6.7** Trình duyệt Thùng rác (xem, khôi phục, làm rỗng).
 - [ ] **6.8** Nhiều cửa sổ (mỗi cửa sổ có tab riêng).
 - [ ] **6.9** Dual pane (hai khung cạnh nhau, kéo-thả giữa hai khung).
-- [ ] **6.10** Git status trong danh sách (chỉ đọc, không cần thư viện nặng ngay).
+- [x] **6.10** Git status trong danh sách (chỉ đọc, không cần thư viện nặng ngay). (`files-fs::gitstatus` đọc `git status --porcelain=v1 -z`, không cần thư viện Git. Cột chữ cái (U/M/S/D/!) trước cột kích thước, màu theo quy ước git. Chỉ gọi `git` khi thư mục nằm trong repo (`repo_root` dò `.git`). **Hai lỗi thật đã gặp và sửa**: (1) `--no-optional-locks` là option TOÀN CỤC nên phải đứng trước `status`, đặt sau thì git báo 'unknown option' và tính năng im lặng không chạy; (2) `git status` trả đường dẫn tương đối theo repo root. 13 test đơn vị + 3 test tích hợp trên repo thật.)
 
 Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, cloud drive, format ổ đĩa, đặt hình nền.
 
@@ -202,3 +202,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-18 | 6.3, 6.4, 6.2 | Tooltip breadcrumb (tự vẽ vì Slint 1.19 không có TooltipArea). Ghim sidebar lưu trong settings. Tìm đệ quy có giới hạn, huỷ được, tránh junction. 9 test mới. |
 | 2026-11-18 | 6.5, 6.6 | Xoay ảnh qua WIC (kiểm chứng 4×2 → 2×4). Đọc đích shortcut qua IShellLinkW (kiểm chứng với .lnk thật). 4 test mới. |
 | 2026-11-18 | 6.1 | Thumbnail ảnh qua WIC, giữ tỉ lệ, chỉ hỏi tệp ảnh. 3 test. |
+| 2026-11-18 | 6.10 | Git status qua CLI, cột chữ cái có màu. Sửa lỗi thứ tự `--no-optional-locks`. 16 test. |
