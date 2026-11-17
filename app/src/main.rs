@@ -32,18 +32,10 @@ mod navigation;
 mod view;
 mod tags;
 mod window;
+mod windows;
 mod wiring;
 
-use wiring::wire_callbacks;
-use navigation::{build_sidebar, reload};
-use state::{apply_saved_ui, settings_path, tag_store_path, App, Tab};
-use tabs::sync_tabs;
-use events::{install_progress_pump, install_result_pump, install_status_clear, install_watch_pump};
-use ops_worker::Worker;
-use slint::ComponentHandle;
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Không có console nên stderr mất hút; ghi log ra tệp để còn chẩn đoán.
@@ -55,79 +47,43 @@ fn main() -> Result<(), slint::PlatformError> {
         logging::log_path()
     ));
 
-    let ui = AppWindow::new()?;
+    // Cửa sổ đầu tiên cũng đi qua cùng đường với các cửa sổ sau, để chỉ có
+    // một nơi dựng App và nối callback.
     let home = std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("C:\\"));
+    windows::open(home)?;
 
-    // Nạp giao diện lần trước trước khi dựng App, để mọi thứ nhất quán ngay
-    // từ khung hình đầu tiên thay vì chớp sang nền sáng rồi mới đổi.
-    let settings_path = settings_path();
-    let saved = settings::Settings::load(&settings_path);
+    // Dọn cửa sổ đã đóng theo nhịp; không có bước này thì một cửa sổ đóng vẫn
+    // giữ luồng nền và watcher của nó.
+    install_window_sweeper();
 
-    // Không tạo được luồng nền thì app không thể hoạt động: báo lỗi và thoát
-    // bằng `?`, không panic.
-    let (worker, results) = Worker::spawn().map_err(|e| {
-        slint::PlatformError::Other(format!("Không tạo được luồng nền: {e}"))
-    })?;
-    let app = Rc::new(RefCell::new(App {
-        tabs: vec![Tab::new(home.clone())],
-        active: 0,
-        show_hidden: saved.show_hidden,
-        show_sidebar: saved.show_sidebar,
-        show_preview: saved.show_preview,
-        view_mode: saved.view_mode,
-        dark: saved.dark,
-        clipboard: Vec::new(),
-        clipboard_cut: false,
-        load_token: 0,
-        load_in_flight: false,
-        grid_width: 900.0,
-        worker,
-        results,
-        watch: None,
-        watched_path: None,
-        closed_tabs: Vec::new(),
-        show_extensions: saved.show_extensions,
-        folders_first: saved.folders_first,
-        tags: {
-            let path = tag_store_path();
-            tags::TagStore::load(&path)
-        },
-        tag_path: tag_store_path(),
-        settings: saved,
-        settings_path,
-        undo: Default::default(),
-        git_status: Default::default(),
-    }));
-
-    build_sidebar(&ui, &app.borrow());
-    // Áp giao diện đã lưu TRƯỚC khung hình đầu tiên, để không bị chớp sáng
-    // rồi mới tối.
-    apply_saved_ui(&ui, &app.borrow());
-    reload(&ui, &app);
-    sync_tabs(&ui, &app.borrow());
-
-    wire_callbacks(&ui, &app);
-    install_progress_pump(&ui, &app);
-    install_status_clear(&ui);
-    install_result_pump(&ui, &app);
-    install_watch_pump(&ui, &app);
-
-    // Cửa sổ không khung: nút thu nhỏ/phóng/đóng do app tự vẽ, nên phải tự
-    // chuyển chúng thành lệnh Win32.
-    window::wire(&ui);
-    window::install_state_poller(&ui);
-
-    ui.run()
+    slint::run_event_loop()
 }
 
 // ---------------------------------------------------------------- sidebar
+
+/// Dọn danh sách cửa sổ theo nhịp, và thoát khi không còn cửa sổ nào.
+///
+/// Slint kết thúc event loop khi cửa sổ cuối cùng đóng, nhưng danh sách của ta
+/// phải được dọn để không giữ `App` (kèm luồng nền) của cửa sổ đã đóng.
+fn install_window_sweeper() {
+    use std::time::Duration;
+    let timer = slint::Timer::default();
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(400), || {
+        windows::sweep();
+        if windows::is_empty() {
+            let _ = slint::quit_event_loop();
+        }
+    });
+    std::mem::forget(timer);
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use commands::{filter_palette, PALETTE};
+    use ops_worker::Worker;
     use ops_worker::{Job, JobDone};
     use std::time::Duration;
 

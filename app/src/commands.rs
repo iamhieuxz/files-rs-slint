@@ -72,6 +72,7 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     match id {
         "tag-clear" => set_tag_on_selection(ui, app, None),
         "rotate-cw" => rotate_selection(ui, app),
+        "new-window" => open_new_window(ui, app),
         "empty-recycle-bin" => ask_empty_recycle_bin(ui),
         "pin-folder" => toggle_pin(ui, app),
         // Tìm đệ quy dùng chính nội dung ô lọc làm từ khoá.
@@ -372,6 +373,7 @@ pub fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
 pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "new-folder", label: "Thư mục mới", icon: "folder", shortcut: "Ctrl+Shift+N" },
     PaletteCommand { id: "new-file", label: "Tệp mới", icon: "document", shortcut: "" },
+    PaletteCommand { id: "new-window", label: "Cửa sổ mới", icon: "window", shortcut: "Ctrl+N" },
     PaletteCommand { id: "empty-recycle-bin", label: "Làm rỗng Thùng rác", icon: "delete", shortcut: "" },
     PaletteCommand { id: "rotate-cw", label: "Xoay ảnh 90° phải", icon: "arrow_clockwise", shortcut: "" },
     PaletteCommand { id: "search-recursive", label: "Tìm trong thư mục con", icon: "search", shortcut: "Ctrl+Shift+F" },
@@ -492,4 +494,20 @@ pub fn ask_empty_recycle_bin(ui: &AppWindow) {
     ui.set_dialog_has_input(false);
     ui.set_dialog_allows_empty(false);
     ui.set_dialog_open(true);
+}
+
+/// Mở cửa sổ mới ở đúng thư mục đang xem.
+///
+/// Mỗi cửa sổ có tab, clipboard và lịch sử riêng: dùng chung sẽ khiến việc
+/// chuyển thư mục ở cửa sổ này làm nhảy cả cửa sổ kia.
+pub fn open_new_window(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let here = app.borrow().tab().current().to_path_buf();
+    match crate::windows::open(here) {
+        Ok(()) => ui.set_status_tertiary(SharedString::from("Đã mở cửa sổ mới")),
+        Err(e) => {
+            logging::write(&format!("không mở được cửa sổ mới: {e}"));
+            let text = format!("Không mở được cửa sổ mới: {e}");
+            ui.set_error_text(SharedString::from(text.as_str()));
+        }
+    }
 }

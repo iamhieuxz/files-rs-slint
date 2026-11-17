@@ -14,7 +14,7 @@ use slint::ComponentHandle;
 /// Uses the winit backend's window accessor, which is the supported way to reach
 /// the native handle from Slint without owning the event loop.
 #[cfg(windows)]
-pub fn wire(ui: &crate::AppWindow) {
+pub fn wire(ui: &crate::AppWindow, app_id: *const std::cell::RefCell<crate::state::App>) {
     use slint::winit_030::WinitWindowAccessor;
 
     {
@@ -45,7 +45,10 @@ pub fn wire(ui: &crate::AppWindow) {
         let w = ui.as_weak();
         ui.on_window_close(move || {
             let Some(ui) = w.upgrade() else { return };
-            // Slint owns the loop; asking it to hide is the clean exit path.
+            // Đóng cửa sổ phải đi qua registry: nếu chỉ `hide()` thì `App` và
+            // luồng nền của cửa sổ đó vẫn sống mãi. Dùng địa chỉ của `App` để
+            // đóng đúng cửa sổ, không đoán.
+            crate::windows::close_by_app(app_id);
             if let Err(e) = ui.hide() {
                 crate::logging::write(&format!("không ẩn được cửa sổ: {e}"));
             }
@@ -123,7 +126,7 @@ fn is_zoomed(hwnd: HWND) -> bool {
 
 /// Non-Windows builds keep the callbacks but do nothing, so the UI still builds.
 #[cfg(not(windows))]
-pub fn wire(_ui: &crate::AppWindow) {}
+pub fn wire(_ui: &crate::AppWindow, _app_id: *const std::cell::RefCell<crate::state::App>) {}
 
 /// Track whether the window is maximized so the button can show the right glyph.
 ///

@@ -6,7 +6,7 @@
 
 use crate::slint_generated::*;
 use crate::state::{App, Tab};
-use crate::reload;
+use crate::navigation::reload;
 use slint::{ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::path::PathBuf;
