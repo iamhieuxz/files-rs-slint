@@ -148,8 +148,10 @@ mod tests {
         // Ghim nam trong settings.json nen phai doc lai duoc.
         let dir = scratch("settings-pins");
         let path = dir.join("settings.json");
-        let mut s = Settings::default();
-        s.pinned_folders = vec![r"C:\A".into(), r"D:\B".into()];
+        let s = Settings {
+            pinned_folders: vec![r"C:\A".into(), r"D:\B".into()],
+            ..Settings::default()
+        };
         s.save(&path).expect("ghi được");
 
         let back = Settings::load(&path);
