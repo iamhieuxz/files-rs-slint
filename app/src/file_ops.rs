@@ -261,3 +261,28 @@ pub fn redo_last(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
     reload(ui, app);
 }
+
+/// Tìm đệ quy dưới thư mục hiện tại.
+///
+/// Tìm ngay trong thư mục đã có sẵn (bộ lọc nhanh); đây là bước mở rộng xuống
+/// các thư mục con, có giới hạn độ sâu để không quét cả ổ đĩa.
+pub fn search_recursive(ui: &AppWindow, app: &Rc<RefCell<App>>, query: &str) {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        ui.set_status_tertiary(SharedString::from("Gõ tên cần tìm trước"));
+        return;
+    }
+    let (root, token) = {
+        let s = app.borrow();
+        (s.tab().current().to_path_buf(), s.load_token)
+    };
+    ui.set_busy(true);
+    ui.set_busy_text(SharedString::from("Đang tìm trong thư mục con…"));
+    app.borrow().worker.submit(Job::Search {
+        root,
+        query: q,
+        max_depth: 8,
+        limit: 500,
+        token,
+    });
+}

@@ -7,7 +7,7 @@
 
 use crate::slint_generated::*;
 use crate::state::App;
-use crate::view::{apply_shell_icon, fill_size_cell, to_slint_image};
+use crate::view::{apply_shell_icon, fill_size_cell, push_status, push_view, to_slint_image};
 use crate::{logging, navigation};
 use navigation::{apply_listing, reload};
 use crate::ops_worker::JobDone;
@@ -196,6 +196,33 @@ pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                             format!("Kích thước thư mục: {}", format::format_size(Some(bytes))).as_str(),
                         ));
                     }
+                }
+                Ok(JobDone::SearchDone { token, root, hits, cancelled }) => {
+                    // Bỏ kết quả của lần tìm trước khi người dùng đã đổi thư mục.
+                    if token != a.borrow().load_token {
+                        continue;
+                    }
+                    let count = hits.len();
+                    {
+                        let mut s = a.borrow_mut();
+                        let active = s.active;
+                        let tab = &mut s.tabs[active];
+                        // Hiện kết quả như một danh sách tạm: không thay `entries`
+                        // của thư mục, để thoát tìm kiếm là quay lại đúng chỗ cũ.
+                        tab.entries = hits.iter().map(|h| h.entry.clone()).collect();
+                        tab.selection.clear();
+                        tab.anchor = None;
+                        tab.filter.clear();
+                        tab.rebuild_visible();
+                    }
+                    push_view(&ui, &a);
+                    push_status(&ui, &a);
+                    let text = if cancelled {
+                        format!("Đã huỷ tìm kiếm sau {count} kết quả")
+                    } else {
+                        format!("Tìm thấy {count} kết quả trong {}", root.display())
+                    };
+                    ui.set_status_tertiary(SharedString::from(text.as_str()));
                 }
                 Ok(JobDone::ShellIcon { path, icon, token }) => {
                     // Bỏ qua nếu người dùng đã rời thư mục.

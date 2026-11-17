@@ -71,6 +71,14 @@ pub enum Job {
     FolderSize {
         path: PathBuf,
     },
+    /// Tìm đệ quy dưới một thư mục.
+    Search {
+        root: PathBuf,
+        query: String,
+        max_depth: usize,
+        limit: usize,
+        token: u64,
+    },
     /// Delete without the Recycle Bin (Shift+Delete).
     DeletePermanent {
         paths: Vec<PathBuf>,
@@ -98,6 +106,13 @@ pub enum JobDone {
         path: PathBuf,
         bytes: u64,
         token: u64,
+    },
+    /// Kết quả tìm kiếm đệ quy.
+    SearchDone {
+        token: u64,
+        root: PathBuf,
+        hits: Vec<files_fs::SearchHit>,
+        cancelled: bool,
     },
     /// A decoded Windows shell icon, ready for Slint.
     ShellIcon {
@@ -397,6 +412,14 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 Err(e) => (format!("Tính mã băm lỗi: {}", e.message), Err(e)),
             };
             JobDone::OpDone { label, result, undo: None }
+        }
+        Job::Search { root, query, max_depth, limit, token } => {
+            let opts = files_fs::SearchOptions { query, max_depth, limit };
+            // Tìm kiếm không huỷ được ở đây: nó chạy trên luồng thao tác nên
+            // không được chiếm chỗ lâu. Giới hạn độ sâu và số kết quả là chốt chặn.
+            let (hits, cancelled) = files_fs::search(&root, &opts, || progress.cancelled());
+            progress.finish();
+            JobDone::SearchDone { token, root, hits, cancelled }
         }
         Job::FolderSize { path } => {
             // Explicit "tính kích thước" from the menu; token 0 never matches a

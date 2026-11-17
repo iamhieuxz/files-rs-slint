@@ -72,6 +72,11 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     match id {
         "tag-clear" => set_tag_on_selection(ui, app, None),
         "pin-folder" => toggle_pin(ui, app),
+        // Tìm đệ quy dùng chính nội dung ô lọc làm từ khoá.
+        "search-recursive" => {
+            let q = ui.get_filter_text().to_string();
+            crate::file_ops::search_recursive(ui, app, &q)
+        }
         "undo" => undo_last(ui, app),
         "redo" => redo_last(ui, app),
         "refresh" => reload(ui, app),
@@ -365,6 +370,7 @@ pub fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
 pub const PALETTE: &[PaletteCommand] = &[
     PaletteCommand { id: "new-folder", label: "Thư mục mới", icon: "folder", shortcut: "Ctrl+Shift+N" },
     PaletteCommand { id: "new-file", label: "Tệp mới", icon: "document", shortcut: "" },
+    PaletteCommand { id: "search-recursive", label: "Tìm trong thư mục con", icon: "search", shortcut: "Ctrl+Shift+F" },
     PaletteCommand { id: "pin-folder", label: "Ghim hoặc bỏ ghim thư mục", icon: "pin", shortcut: "" },
     PaletteCommand { id: "undo", label: "Hoàn tác", icon: "arrow_undo", shortcut: "Ctrl+Z" },
     PaletteCommand { id: "redo", label: "Làm lại", icon: "arrow_redo", shortcut: "Ctrl+Y" },

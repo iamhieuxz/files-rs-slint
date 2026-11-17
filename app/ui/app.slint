@@ -242,7 +242,12 @@ export component AppWindow inherits Window {
                 if (event.text == "y") { root.command("redo"); return accept; }
                 if (event.text == "a") { root.command("select-all"); return accept; }
                 if (event.text == "h") { root.command("toggle-hidden"); return accept; }
-                if (event.text == "f") { root.start-filter(); return accept; }
+                if (event.text == "f") {
+                    // Ctrl+Shift+F tìm đệ quy; Ctrl+F chỉ lọc trong thư mục.
+                    if (event.modifiers.shift) { root.command("search-recursive"); }
+                    else { root.start-filter(); }
+                    return accept;
+                }
                 if (event.text == "r") { root.refresh(); return accept; }
                 if (event.text == "d") { root.command("duplicate-tab"); return accept; }
                 // Ctrl+Shift+P mở Command Palette.
