@@ -30,10 +30,28 @@ kiểu control, cùng bố cục. Không sao chép mã C#.
 
 ## Kiểm chứng
 
-- `cargo test --workspace`: 45 test, 0 hỏng.
+- `cargo test --workspace`: 48 test, 0 hỏng.
 - `cargo build`: 0 warning.
-- Chạy thật trên Windows 11: cửa sổ mở, liệt kê đúng thư mục Home, breadcrumb
-  hiển thị `C: › Users › <tên>`.
+- Chạy thật trên Windows 11, đã thao tác bằng chuột thật:
+  - mở tab mới bằng nút `+`, đóng tab bằng nút `×`;
+  - Ctrl+click chọn rời (3 mục), Shift+click chọn khoảng (5 mục);
+  - chuyển details ↔ grid, grid tự xuống dòng theo bề rộng;
+  - bật/tắt dark mode;
+  - preview ảnh (đọc đúng favicon 4.8 KB);
+  - breadcrumb hiển thị `C: › Users › <tên>`.
+
+## Sửa sau vòng kiểm thử đầu
+
+| Lỗi | Nguyên nhân | Cách sửa |
+|---|---|---|
+| Nút `×` không đóng được tab | `TouchArea` của tab khai báo sau nút đóng nên nằm trên, nuốt click | Vùng bấm của tab chỉ phủ phần chữ (`width - 26px`) |
+| Header lệch cột so với dữ liệu | Header dùng padding `s4` còn hàng dùng `s3`, và cột "Tên" không tính bề rộng icon | Khớp padding/spacing, cộng `16px + s2` cho cột tên |
+| Grid chỉ hiện 1 hàng | `GridLayout` của Slint 1.19 không tự xuống dòng | Chia hàng trong Rust (`format::chunk_rows`), số cột tính từ bề rộng |
+| Ctrl/Shift+click không chọn nhiều | Callback chỉ nhận `bool` và luôn truyền `false` | Đổi sang `int` mode (0/1/2), đọc `e.modifiers` trong `pointer-event` |
+| Chip clipboard không hiện | `set_clipboard` không cập nhật UI | Cập nhật `clipboard-mode`/`clipboard-count` + status bar |
+| Watcher có thể chồng nhiều lần đọc | `busy_now()` luôn trả `false` | Thêm cờ `load_in_flight`, đặt lại khi có kết quả |
+| "Mở trong tab mới" không làm gì | Lệnh chưa có nhánh xử lý | Thêm nhánh tạo `Tab` mới |
+
 
 ## Chưa làm (cố ý)
 

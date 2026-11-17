@@ -26,6 +26,9 @@ export struct FileRow {
     kind: string,
     icon: string,
     glyph: color,
+    // Vị trí trong danh sách đang hiển thị; cần cho grid vì ở đó mỗi ô
+    // không còn chỉ số dòng như trong vòng lặp or row[i].
+    index: int,
 }
 
 export struct NavEntry {
@@ -71,6 +74,8 @@ export component AppWindow inherits Window {
     in-out property <[NavEntry]> pinned;
     in-out property <[NavEntry]> drives;
     in-out property <[FileRow]> rows;
+    // Grid cần nhóm theo hàng: Slint GridLayout không tự xuống dòng.
+    in-out property <[[FileRow]]> grid-rows;
     in-out property <int> selection-count: 0;
     in-out property <string> status-primary;
     in-out property <string> status-secondary;
@@ -116,7 +121,8 @@ export component AppWindow inherits Window {
 
     callback navigate(string);
     callback open-row(int);
-    callback select-row(int, bool);          // index, ctrl/shift
+    // mode: 0 = thay thế, 1 = shift (chọn khoảng), 2 = ctrl (thêm/bớt)
+    callback select-row(int, int);
     callback go-back();
     callback go-forward();
     callback go-up();
@@ -493,41 +499,46 @@ export component AppWindow inherits Window {
                         height: Theme.header-height;
                         background: Theme.file-area;
                         HorizontalLayout {
-                            padding-left: Theme.s4;
-                            padding-right: Theme.s5;
-                            spacing: 0px;
+                            // Padding và spacing phải khớp CHÍNH XÁC với hàng dữ
+                            // liệu bên dưới, nếu không các cột sẽ lệch nhau.
+                            padding-left: Theme.s1 + Theme.s3;
+                            padding-right: Theme.s1 + Theme.s5;
+                            spacing: Theme.s1;
 
                             Rectangle {
                                 horizontal-stretch: 5;
                                 Text {
-                                    x: Theme.s1;
+                                    // Dịch vào đúng chỗ chữ của tên tệp: bỏ qua
+                                    // 16px icon + s2 spacing ở đầu hàng dữ liệu.
+                                    x: 16px + Theme.s2;
                                     text: "Tên" + (root.sort-column == "name" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
                                     color: root.sort-column == "name" ? Theme.text-primary : Theme.text-secondary;
                                     font-size: Theme.font-caption;
                                     font-weight: Theme.weight-semibold;
                                     vertical-alignment: center;
+                                    overflow: elide;
                                 }
                                 TouchArea { clicked => { root.sort-by("name"); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 2;
                                 Text {
-                                    x: Theme.s1;
                                     text: "Ngày sửa" + (root.sort-column == "modified" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
                                     color: root.sort-column == "modified" ? Theme.text-primary : Theme.text-secondary;
                                     font-size: Theme.font-caption;
                                     vertical-alignment: center;
+                                    overflow: elide;
                                 }
                                 TouchArea { clicked => { root.sort-by("modified"); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 2;
                                 Text {
-                                    x: Theme.s1;
                                     text: "Loại" + (root.sort-column == "kind" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
                                     color: root.sort-column == "kind" ? Theme.text-primary : Theme.text-secondary;
                                     font-size: Theme.font-caption;
                                     vertical-alignment: center;
+                                    overflow: elide;
                                 }
                                 TouchArea { clicked => { root.sort-by("kind"); } }
                             }
@@ -539,6 +550,7 @@ export component AppWindow inherits Window {
                                     font-size: Theme.font-caption;
                                     horizontal-alignment: right;
                                     vertical-alignment: center;
+                                    overflow: elide;
                                 }
                                 TouchArea { clicked => { root.sort-by("size"); } }
                             }
@@ -568,6 +580,8 @@ export component AppWindow inherits Window {
                                     animate background { duration: 70ms; }
 
                                     HorizontalLayout {
+                                        // Hàng dữ liệu nằm trong ScrollView có padding s1,
+                                        // nên lề trái tuyệt đối = s1 + s3, khớp header.
                                         padding-left: Theme.s3;
                                         padding-right: Theme.s5;
                                         spacing: Theme.s1;
@@ -616,53 +630,75 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     rta := TouchArea {
-                                        clicked => { root.select-row(i, false); }
+                                        clicked => { }
                                         double-clicked => { root.open-row(i); }
                                         pointer-event(e) => {
-                                            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
-                                                root.select-row(i, false);
-                                                root.row-context-menu(i, self.mouse-x, self.mouse-y);
+                                            if (e.kind == PointerEventKind.down) {
+                                                if (e.button == PointerEventButton.right) {
+                                                    root.select-row(i, 0);
+                                                    root.row-context-menu(i, self.mouse-x, self.mouse-y);
+                                                } else if (e.button == PointerEventButton.left) {
+                                                    // Chuyển modifier xuống Rust: Ctrl = thêm/bớt
+                                                    // một mục, Shift = chọn cả khoảng.
+                                                    root.select-row(
+                                                        i,
+                                                        e.modifiers.control ? 2 : (e.modifiers.shift ? 1 : 0)
+                                                    );
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
 
-                            if root.view-mode == 1: GridLayout {
+                            if root.view-mode == 1: VerticalLayout {
                                 spacing: Theme.s1;
-                                for row[i] in root.rows: Rectangle {
-                                    height: Theme.grid-tile;
-                                    width: Theme.grid-tile;
-                                    border-radius: Theme.r-md;
-                                    background: row.selected ? Theme.accent-subtle
-                                        : gta.has-hover ? Theme.subtle-hover : transparent;
-                                    VerticalLayout {
-                                        padding: Theme.s2;
-                                        spacing: Theme.s1;
-                                        alignment: center;
-                                        FluentIcon {
-                                            name: row.icon;
-                                            width: 40px;
-                                            height: 40px;
-                                            tint: row.glyph;
+                                // Slint's GridLayout does not wrap: rows must be
+                                // grouped in Rust (see `format::chunk_rows`).
+                                for line in root.grid-rows: HorizontalLayout {
+                                    spacing: Theme.s1;
+                                    alignment: start;
+                                    for row in line: Rectangle {
+                                        height: Theme.grid-tile;
+                                        width: Theme.grid-tile;
+                                        border-radius: Theme.r-md;
+                                        background: row.selected ? Theme.accent-subtle
+                                            : gta.has-hover ? Theme.subtle-hover : transparent;
+                                        VerticalLayout {
+                                            padding: Theme.s2;
+                                            spacing: Theme.s1;
+                                            alignment: center;
+                                            FluentIcon {
+                                                name: row.icon;
+                                                width: 40px;
+                                                height: 40px;
+                                                tint: row.glyph;
+                                            }
+                                            Text {
+                                                text: row.name;
+                                                color: Theme.text-primary;
+                                                font-size: Theme.font-caption;
+                                                horizontal-alignment: center;
+                                                overflow: elide;
+                                                wrap: word-wrap;
+                                                max-height: 32px;
+                                            }
                                         }
-                                        Text {
-                                            text: row.name;
-                                            color: Theme.text-primary;
-                                            font-size: Theme.font-caption;
-                                            horizontal-alignment: center;
-                                            overflow: elide;
-                                            wrap: word-wrap;
-                                            max-height: 32px;
-                                        }
-                                    }
-                                    gta := TouchArea {
-                                        clicked => { root.select-row(i, false); }
-                                        double-clicked => { root.open-row(i); }
-                                        pointer-event(e) => {
-                                            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
-                                                root.select-row(i, false);
-                                                root.row-context-menu(i, self.mouse-x, self.mouse-y);
+                                        gta := TouchArea {
+                                            clicked => { }
+                                            double-clicked => { root.open-row(row.index); }
+                                            pointer-event(e) => {
+                                                if (e.kind == PointerEventKind.down) {
+                                                    if (e.button == PointerEventButton.right) {
+                                                        root.select-row(row.index, 0);
+                                                        root.row-context-menu(row.index, self.mouse-x, self.mouse-y);
+                                                    } else if (e.button == PointerEventButton.left) {
+                                                        root.select-row(
+                                                            row.index,
+                                                            e.modifiers.control ? 2 : (e.modifiers.shift ? 1 : 0)
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }

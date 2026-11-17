@@ -113,6 +113,18 @@ pub fn crumb_line(labels: &[String]) -> String {
     labels.join("  ›  ")
 }
 
+/// Split items into rows of at most `per_row`.
+///
+/// `GridLayout` in Slint 1.19 does not wrap: everything lands in one row. The
+/// grid view therefore groups the items here and renders one `HorizontalLayout`
+/// per row.
+pub fn chunk_rows<T: Clone>(items: &[T], per_row: usize) -> Vec<Vec<T>> {
+    if per_row == 0 {
+        return Vec::new();
+    }
+    items.chunks(per_row).map(|c| c.to_vec()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +216,29 @@ mod tests {
     #[test]
     fn an_empty_crumb_list_renders_nothing() {
         assert_eq!(crumb_line(&[]), "");
+    }
+
+    #[test]
+    fn grid_rows_hold_at_most_per_row_items() {
+        let items: Vec<u32> = (0..7).collect();
+        let rows = chunk_rows(&items, 3);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].len(), 3);
+        assert_eq!(rows[2].len(), 1, "the last row is short");
+        // Every item appears exactly once, in order.
+        let flat: Vec<u32> = rows.into_iter().flatten().collect();
+        assert_eq!(flat, items);
+    }
+
+    #[test]
+    fn an_empty_grid_has_no_rows() {
+        let items: Vec<u32> = Vec::new();
+        assert!(chunk_rows(&items, 5).is_empty());
+    }
+
+    #[test]
+    fn a_zero_column_grid_does_not_panic() {
+        let items = vec![1, 2, 3];
+        assert!(chunk_rows(&items, 0).is_empty());
     }
 }

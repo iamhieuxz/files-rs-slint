@@ -95,6 +95,11 @@ struct App {
     clipboard_cut: bool,
     /// Bumped on every navigation so a stale listing reply is ignored.
     load_token: u64,
+    /// True while a directory read is in flight, so the watcher cannot stack
+    /// another reload on top of it.
+    load_in_flight: bool,
+    /// Width available to the file list, so the grid can pick a column count.
+    grid_width: f32,
     worker: Worker,
     results: Receiver<JobDone>,
     /// Paths whose change should trigger a refresh, from the directory watcher.
@@ -134,6 +139,8 @@ fn main() -> Result<(), slint::PlatformError> {
         clipboard: Vec::new(),
         clipboard_cut: false,
         load_token: 0,
+        load_in_flight: false,
+        grid_width: 900.0,
         worker,
         results,
         watch: None,
@@ -210,6 +217,7 @@ fn reload(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let (path, sort, opts, token) = {
         let mut a = app.borrow_mut();
         a.load_token += 1;
+        a.load_in_flight = true;
         let token = a.load_token;
         let path = a.tab().current().to_path_buf();
         let sort = a.tab().sort;
@@ -255,25 +263,35 @@ fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let rows: Vec<FileRow> = tab
         .visible
         .iter()
-        .filter_map(|i| tab.entries.get(*i))
-        .map(|e| {
+        .enumerate()
+        .filter_map(|(visible_index, entry_index)| {
+            let e = tab.entries.get(*entry_index)?;
             let (icon, glyph) = format::icon_for(e);
-            FileRow {
+            Some(FileRow {
                 name: SharedString::from(e.name.as_str()),
                 path: SharedString::from(e.path.as_str()),
                 is_dir: e.is_dir(),
                 is_hidden: e.is_hidden,
-                selected: tab.selection.contains(&index_of(tab, e)),
+                selected: tab.selection.contains(entry_index),
                 size: SharedString::from(format::format_size(e.size).as_str()),
                 modified: SharedString::from(format::format_time(e.modified_ms).as_str()),
                 kind: SharedString::from(format::kind_label(e).as_str()),
                 icon: SharedString::from(icon),
                 glyph: color_from_u32(glyph),
-            }
+                index: visible_index as i32,
+            })
         })
         .collect();
 
+    // Grid không tự xuống dòng, nên chia hàng ở đây theo bề rộng khả dụng.
+    let per_row = grid_columns(a.grid_width);
+    let grid_rows: Vec<ModelRc<FileRow>> = format::chunk_rows(&rows, per_row)
+        .into_iter()
+        .map(|line| ModelRc::new(VecModel::from(line)))
+        .collect();
+
     ui.set_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_grid_rows(ModelRc::new(VecModel::from(grid_rows)));
     ui.set_address_text(SharedString::from(tab.current().to_string_lossy().as_ref()));
     ui.set_can_back(tab.history.can_back());
     ui.set_can_forward(tab.history.can_forward());
@@ -305,12 +323,19 @@ fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.set_crumbs(ModelRc::new(VecModel::from(crumbs)));
 }
 
-/// Index of `entry` inside `tab.entries`.
-fn index_of(tab: &Tab, entry: &Entry) -> usize {
-    tab.entries
-        .iter()
-        .position(|e| e.path == entry.path)
-        .unwrap_or(0)
+/// How many grid tiles fit across `width`.
+///
+/// Tile + gap come from the design tokens (132px + 4px); the floor keeps a
+/// partial tile from being cut off at the right edge.
+fn grid_columns(width: f32) -> usize {
+    const TILE: f32 = 132.0;
+    const GAP: f32 = 4.0;
+    const MIN: usize = 1;
+    if width <= 0.0 {
+        return MIN;
+    }
+    let cols = ((width + GAP) / (TILE + GAP)).floor() as usize;
+    cols.max(MIN)
 }
 
 fn push_status(ui: &AppWindow, app: &Rc<RefCell<App>>) {
@@ -398,9 +423,9 @@ fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
     {
         let (w, a) = (ui.as_weak(), app.clone());
-        ui.on_select_row(move |i, extend| {
+        ui.on_select_row(move |i, mode| {
             let Some(ui) = w.upgrade() else { return };
-            select_row(&ui, &a, i as usize, extend);
+            select_row(&ui, &a, i as usize, mode);
         });
     }
     {
@@ -779,7 +804,7 @@ fn open_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize) {
     }
 }
 
-fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, extend: bool) {
+fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, mode: i32) {
     {
         let mut s = app.borrow_mut();
         let active = s.active;
@@ -787,20 +812,33 @@ fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, exte
         let Some(entry_index) = tab.visible.get(visible_index).copied() else {
             return;
         };
-        if extend {
-            // Shift+click selects the range from the anchor to the clicked row.
-            let anchor = tab.anchor.unwrap_or(entry_index);
-            let lo = anchor.min(entry_index);
-            let hi = anchor.max(entry_index);
-            tab.selection = tab
-                .visible
-                .iter()
-                .copied()
-                .filter(|i| *i >= lo && *i <= hi)
-                .collect();
-        } else {
-            tab.selection = vec![entry_index];
-            tab.anchor = Some(entry_index);
+        match mode {
+            // Shift: chọn cả khoảng từ mốc neo tới mục vừa bấm.
+            1 => {
+                let anchor = tab.anchor.unwrap_or(entry_index);
+                let lo = anchor.min(entry_index);
+                let hi = anchor.max(entry_index);
+                tab.selection = tab
+                    .visible
+                    .iter()
+                    .copied()
+                    .filter(|i| *i >= lo && *i <= hi)
+                    .collect();
+            }
+            // Ctrl: bật/tắt riêng mục này, giữ nguyên phần còn lại.
+            2 => {
+                if let Some(pos) = tab.selection.iter().position(|i| *i == entry_index) {
+                    tab.selection.remove(pos);
+                } else {
+                    tab.selection.push(entry_index);
+                }
+                tab.anchor = Some(entry_index);
+            }
+            // Bấm thường: chọn duy nhất mục này.
+            _ => {
+                tab.selection = vec![entry_index];
+                tab.anchor = Some(entry_index);
+            }
         }
     }
     push_view(ui, app);
@@ -823,13 +861,14 @@ fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, exte
 fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     match id {
         "refresh" => reload(ui, app),
-        "copy" => set_clipboard(app, false),
-        "cut" => set_clipboard(app, true),
+        "copy" => set_clipboard(ui, app, false),
+        "cut" => set_clipboard(ui, app, true),
         "paste" => do_paste(ui, app),
         "delete" => ask_delete(ui, app),
         "rename" => ask_rename(ui, app),
         "new-folder" => ask_new(ui, app, "new-folder"),
         "new-file" => ask_new(ui, app, "new-file"),
+        "new-menu" => show_new_menu(ui, 12.0, 40.0),
         "select-all" => {
             {
                 let mut s = app.borrow_mut();
@@ -870,6 +909,28 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
             }
         }
         "properties" => show_properties(ui, app),
+        // Mở thư mục đang chọn trong một tab mới, giữ tab hiện tại nguyên vẹn.
+        "open-new-tab" => {
+            let target = {
+                let s = app.borrow();
+                s.tab().selected_entries().first().map(|e| (e.is_dir(), PathBuf::from(&e.path)))
+            };
+            if let Some((true, path)) = target {
+                {
+                    let mut s = app.borrow_mut();
+                    s.tabs.push(Tab::new(path));
+                    s.active = s.tabs.len() - 1;
+                }
+                sync_tabs(ui, &app.borrow());
+                reload(ui, app);
+            } else if let Some((false, path)) = target {
+                if let Err(e) = open::that_detached(&path) {
+                    ui.set_error_text(SharedString::from(
+                        format!("Không mở được tệp: {e}").as_str(),
+                    ));
+                }
+            }
+        }
         "nav-up" | "nav-down" => move_selection(ui, app, id == "nav-down"),
         _ => {}
     }
@@ -901,18 +962,31 @@ fn move_selection(ui: &AppWindow, app: &Rc<RefCell<App>>, down: bool) {
         }
     };
     if let Some(i) = next {
-        select_row(ui, app, i, false);
+        select_row(ui, app, i, 0);
     }
 }
 
-fn set_clipboard(app: &Rc<RefCell<App>>, cut: bool) {
+fn set_clipboard(ui: &AppWindow, app: &Rc<RefCell<App>>, cut: bool) {
     let paths = app.borrow().tab().selected_paths();
     if paths.is_empty() {
         return;
     }
-    let mut s = app.borrow_mut();
-    s.clipboard = paths;
-    s.clipboard_cut = cut;
+    let count = paths.len() as i32;
+    {
+        let mut s = app.borrow_mut();
+        s.clipboard = paths;
+        s.clipboard_cut = cut;
+    }
+    // Chip trên command bar chỉ có ý nghĩa khi biết đang giữ gì.
+    ui.set_clipboard_mode(SharedString::from(if cut { "cut" } else { "copy" }));
+    ui.set_clipboard_count(count);
+    ui.set_status_tertiary(SharedString::from(
+        format!(
+            "Đã {} {count} mục",
+            if cut { "cắt" } else { "sao chép" }
+        )
+        .as_str(),
+    ));
 }
 
 fn do_paste(ui: &AppWindow, app: &Rc<RefCell<App>>) {
@@ -978,6 +1052,18 @@ fn ask_new(ui: &AppWindow, app: &Rc<RefCell<App>>, kind: &str) {
     ui.set_dialog_has_input(true);
     ui.set_dialog_value(SharedString::default());
     ui.set_dialog_open(true);
+}
+
+/// Menu của nút "Mới" (phần mũi tên tách rời).
+fn show_new_menu(ui: &AppWindow, x: f32, y: f32) {
+    let items = vec![
+        menu("new-folder", "Thư mục mới", "folder", "Ctrl+Shift+N", true, false),
+        menu("new-file", "Tệp văn bản mới", "document", "", true, false),
+    ];
+    ui.set_menu_items(ModelRc::new(VecModel::from(items)));
+    ui.set_menu_x(x);
+    ui.set_menu_y(y);
+    ui.set_menu_open(true);
 }
 
 fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
@@ -1049,6 +1135,8 @@ fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                     if token != a.borrow().load_token {
                         continue;
                     }
+                    // This reply settles the in-flight read, whatever it says.
+                    a.borrow_mut().load_in_flight = false;
                     match result {
                         Ok(listing) => {
                             apply_listing(&ui, &a, listing);
@@ -1073,12 +1161,13 @@ fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                     match result {
                         Ok(()) => {
                             ui.set_status_tertiary(SharedString::from(label.as_str()));
-                            if !a.borrow().clipboard_cut || !label.contains("di chuyển") {
-                                // nothing extra
-                            }
-                            if label.contains("di chuyển") {
+                            // Sau khi di chuyển, nguồn đã biến mất nên clipboard
+                            // phải rỗng; dán lại sẽ báo lỗi không tìm thấy.
+                            if a.borrow().clipboard_cut {
                                 a.borrow_mut().clipboard.clear();
                                 ui.set_clipboard_count(0);
+                                a.borrow_mut().clipboard_cut = false;
+                                ui.set_clipboard_mode(SharedString::default());
                             }
                             reload(&ui, &a);
                         }
@@ -1109,16 +1198,11 @@ fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                 None => false,
             }
         };
-        if fired && !a.borrow().busy_now() {
+        // Một lần đọc đang chạy thì bỏ qua nhịp này: nếu không, mỗi sự kiện
+        // của `notify` lại xếp thêm một lần đọc và UI quay vòng vô ích.
+        if fired && !a.borrow().load_in_flight {
             reload(&ui, &a);
         }
     });
     std::mem::forget(timer);
-}
-
-impl App {
-    /// True while a load is in flight; used to avoid stacking refreshes.
-    fn busy_now(&self) -> bool {
-        false
-    }
 }

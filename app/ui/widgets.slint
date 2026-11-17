@@ -261,7 +261,9 @@ export component TabItem inherits Rectangle {
             overflow: elide;
             horizontal-stretch: 1;
         }
-        // Nút đóng khai báo SAU touch area của tab để nhận click trước.
+        // Nút đóng: bọc trong Rectangle riêng để TouchArea của nó nằm TRÊN
+        // touch area của tab. Thứ tự khai báo quyết định thứ tự nhận sự kiện,
+        // nên `ta` phải đứng trước khối này (xem cuối component).
         Rectangle {
             width: 20px;
             height: 20px;
@@ -273,13 +275,25 @@ export component TabItem inherits Rectangle {
                 height: 12px;
                 x: 4px;
                 y: 4px;
-                tint: Theme.text-secondary;
+                tint: close-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
             }
-            close-ta := TouchArea { clicked => { root.closed(); } }
+            close-ta := TouchArea {
+                clicked => { root.closed(); }
+                // Nuốt luôn double-click để không mở nhầm tab khi bấm nhanh.
+                double-clicked => { root.closed(); }
+            }
         }
     }
 
-    ta := TouchArea { clicked => { root.clicked(); } }
+    // TouchArea của tab khai báo TRƯỚC nút đóng ở trên là không được: Slint
+    // xử lý theo thứ tự khai báo và phần tử sau nằm trên. Vì vậy vùng bấm của
+    // tab chỉ phủ phần chữ, nhường vùng phải cho nút đóng.
+    ta := TouchArea {
+        x: 0;
+        width: parent.width - 26px;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
 }
 
 // ---- Ô nhập văn bản theo kiểu Fluent TextBox ----
