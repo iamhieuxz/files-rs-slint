@@ -93,46 +93,6 @@ fn ensure_com() {
     });
 }
 
-/// Xoá một handle GDI, bỏ qua handle rỗng.
-///
-/// Đây là chỗ duy nhất gọi `DeleteObject` trong tệp. Gộp lại để `unsafe` không
-/// rải khắp mười nhánh lỗi, và để mọi lần rò handle đều đi qua log.
-#[cfg(windows)]
-fn delete_gdi(handle: windows::Win32::Graphics::Gdi::HGDIOBJ) {
-    if handle.0.is_null() {
-        return;
-    }
-    // SAFETY: `handle` do chính hàm gọi tạo ra qua `GetIconInfo`/`GetObjectW`,
-    // và mỗi handle chỉ được xoá đúng một lần. `DeleteObject` không truy cập
-    // bộ nhớ của tiến trình gọi.
-    let ok = unsafe { windows::Win32::Graphics::Gdi::DeleteObject(handle) };
-    if !ok.as_bool() {
-        crate::log::warn("DeleteObject thất bại: handle GDI có thể đã bị xoá");
-    }
-}
-
-/// Giải phóng device context tạo bởi `CreateCompatibleDC`.
-#[cfg(windows)]
-fn delete_dc(dc: windows::Win32::Graphics::Gdi::HDC) {
-    if dc.is_invalid() {
-        return;
-    }
-    // SAFETY: `dc` do `CreateCompatibleDC` tạo trong cùng hàm và chỉ dùng để
-    // sao chép pixel; giải phóng đúng một lần.
-    let _ = unsafe { windows::Win32::Graphics::Gdi::DeleteDC(dc) };
-}
-
-/// Giải phóng icon lấy từ Shell.
-#[cfg(windows)]
-fn destroy_icon(icon: windows::Win32::UI::WindowsAndMessaging::HICON) {
-    if icon.is_invalid() {
-        return;
-    }
-    // SAFETY: `icon` đến từ `SHGetFileInfoW` với cờ `SHGFI_ICON`, thuộc sở hữu
-    // của bên gọi, và chỉ được huỷ một lần ở đây.
-    let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyIcon(icon) };
-}
-
 /// Read the Shell's icon for `path` at `size` pixels.
 ///
 /// Returns `None` when the Shell has no icon, which is not an error: the caller
@@ -154,13 +114,14 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
+        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP,
+        BITMAPINFO,
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
     };
     use windows::Win32::UI::Shell::{
         SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_LARGEICON,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, ICONINFO};
+    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
     // The Shell refuses to hand out icons on a thread that never initialised
     // COM. Skipping this makes `SHGetFileInfoW` return 0 *intermittently*,
@@ -207,7 +168,11 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         let hbm = icon_info.hbmColor;
         if hbm.is_invalid() {
             if !icon_info.hbmMask.is_invalid() {
-                delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
+                // SAFETY: `hbmMask` vừa được `GetIconInfo` điền, là handle GDI
+                // hợp lệ thuộc sở hữu của ta, và chỉ xoá một lần ở đây.
+                if !unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) }.as_bool() {
+                    crate::log::warn("DeleteObject hbmMask thất bại");
+                }
             }
             return Ok(None);
         }
@@ -222,16 +187,28 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
             )
         };
         if got == 0 {
-            delete_gdi(HGDIOBJ(hbm.0));
-            delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
+            // SAFETY: `hbm` là bitmap màu hợp lệ từ `GetIconInfo`, chưa xoá.
+            if !unsafe { DeleteObject(HGDIOBJ(hbm.0)) }.as_bool() {
+                crate::log::warn("DeleteObject hbm thất bại (GetObjectW = 0)");
+            }
+            // SAFETY: `hbmMask` cùng nguồn, chưa xoá.
+            if !unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) }.as_bool() {
+                crate::log::warn("DeleteObject hbmMask thất bại (GetObjectW = 0)");
+            }
             return Ok(None);
         }
 
         let w = bmp.bmWidth as u32;
         let h = bmp.bmHeight as u32;
         if w == 0 || h == 0 {
-            delete_gdi(HGDIOBJ(hbm.0));
-            delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
+            // SAFETY: `hbm` là bitmap màu hợp lệ, chưa xoá.
+            if !unsafe { DeleteObject(HGDIOBJ(hbm.0)) }.as_bool() {
+                crate::log::warn("DeleteObject hbm thất bại (kích thước 0)");
+            }
+            // SAFETY: `hbmMask` cùng nguồn, chưa xoá.
+            if !unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) }.as_bool() {
+                crate::log::warn("DeleteObject hbmMask thất bại (kích thước 0)");
+            }
             return Ok(None);
         }
 
@@ -250,13 +227,13 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         };
 
         let mut buf = vec![0u8; (w * h * 4) as usize];
-        // SAFETY: `None` là screen DC, hàm không truy cập bộ nhớ của ta và trả
-        // handle mà ta giải phóng ngay bên dưới.
-        let dc = unsafe { CreateCompatibleDC(None) };
-        // SAFETY: `hbm` là bitmap màu hợp lệ vừa đọc kích thước; `buf` đủ chỗ
-        // cho `w * h` điểm ảnh 32-bit; `bi` khai báo đúng chiều cao âm.
+        // SAFETY: `None` là screen DC hợp lệ cho `CreateCompatibleDC`. `hbm` là
+        // bitmap màu đã đọc kích thước ở trên; `buf` đủ chỗ cho `w * h` điểm
+        // ảnh 32-bit; `bi` khai báo chiều cao âm để nhận ảnh top-down. DC được
+        // giải phóng ngay sau khi sao chép, trong cùng khối.
         let copied = unsafe {
-            GetDIBits(
+            let dc = CreateCompatibleDC(None);
+            let n = GetDIBits(
                 dc,
                 hbm,
                 0,
@@ -264,12 +241,21 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
                 Some(buf.as_mut_ptr() as *mut _),
                 &mut bi,
                 DIB_RGB_COLORS,
-            )
+            );
+            if !DeleteDC(dc).as_bool() {
+                crate::log::warn("DeleteDC thất bại");
+            }
+            n
         };
-        delete_dc(dc);
 
-        delete_gdi(HGDIOBJ(hbm.0));
-        delete_gdi(HGDIOBJ(icon_info.hbmMask.0));
+        // SAFETY: `hbm` là bitmap màu hợp lệ, chưa xoá.
+        if !unsafe { DeleteObject(HGDIOBJ(hbm.0)) }.as_bool() {
+            crate::log::warn("DeleteObject hbm thất bại (sau GetDIBits)");
+        }
+        // SAFETY: `hbmMask` cùng nguồn, chưa xoá.
+        if !unsafe { DeleteObject(HGDIOBJ(icon_info.hbmMask.0)) }.as_bool() {
+            crate::log::warn("DeleteObject hbmMask thất bại (sau GetDIBits)");
+        }
 
         if copied == 0 {
             return Ok(None);
@@ -283,7 +269,12 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
         Ok(Some(RgbaIcon { width: w, height: h, pixels: buf }))
     })();
 
-    destroy_icon(hicon);
+    // SAFETY: `hicon` đến từ `SHGetFileInfoW` với cờ `SHGFI_ICON`, thuộc sở
+    // hữu của bên gọi; mỗi icon chỉ huỷ đúng một lần ở đây.
+    // `DestroyIcon` trả `Result` chứ không phải `BOOL`, khác các hàm GDI ở trên.
+    if let Err(e) = unsafe { DestroyIcon(hicon) } {
+        crate::log::warn(&format!("DestroyIcon thất bại: {e}"));
+    }
     result
 }
 
