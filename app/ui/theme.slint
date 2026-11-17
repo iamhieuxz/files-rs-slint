@@ -32,7 +32,9 @@ export global Theme {
     // ---- Chữ ----
     out property <color> text-primary: dark ? #ffffff : #1a1a1a;
     out property <color> text-secondary: dark ? #ffffffc5 : #5d5d5d;
-    out property <color> text-tertiary: dark ? #ffffff87 : #868686;
+    // #6f6f6f thay cho #868686: #868686 chỉ đạt 3.28:1 trên nền sáng (dưới
+    // ngưỡng AA 4.5), #6f6f6f đạt 4.53:1 và vẫn đọc ra là chữ phụ.
+    out property <color> text-tertiary: dark ? #ffffff87 : #6f6f6f;
     out property <color> text-disabled: dark ? #ffffff5c : #b3b3b3;
     out property <color> text-on-accent: dark ? #000000 : #ffffff;
 

@@ -64,7 +64,14 @@ export component IconButton inherits Rectangle {
     in property <string> icon;
     in property <bool> enabled: true;
     in property <bool> checked: false;
+    /// Nhãn cho trình đọc màn hình. Tên icon ("clipboard_paste") không phải
+    /// tiếng người, nên nơi dùng phải đặt nhãn thật.
+    in property <string> accessible-text: "";
     callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.accessible-text != "" ? root.accessible-text : root.icon;
+    accessible-enabled: root.enabled;
 
     width: 32px;
     height: 32px;
@@ -95,6 +102,8 @@ export component IconButton inherits Rectangle {
 
 // ---- Nút có icon + nhãn + mũi tên tách rời, dùng cho hàng lệnh chính ----
 export component CommandButton inherits Rectangle {
+    accessible-role: button;
+    accessible-label: root.label != "" ? root.label : root.icon;
     in property <string> label;
     in property <string> icon;
     in property <bool> enabled: true;
@@ -165,6 +174,8 @@ export component SidebarItem inherits Rectangle {
     in property <bool> expanded: false;
     callback clicked();
     callback toggle-expanded();
+    accessible-role: button;
+    accessible-label: root.label;
 
     height: 32px;
     border-radius: Theme.r-sm;
@@ -232,6 +243,8 @@ export component TabItem inherits Rectangle {
     callback clicked();
     callback closed();
     callback right-clicked();
+    accessible-role: tab;
+    accessible-label: root.label;
 
     height: Theme.tab-height - 6px;
     min-width: 150px;

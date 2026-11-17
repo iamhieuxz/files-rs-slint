@@ -427,22 +427,24 @@ export component AppWindow inherits Window {
                     menu-clicked => { root.command("new-menu"); }
                 }
                 Rectangle { width: Theme.s1; }
-                IconButton { icon: "cut"; enabled: root.selection-count > 0; clicked => { root.command("cut"); } }
-                IconButton { icon: "copy"; enabled: root.selection-count > 0; clicked => { root.command("copy"); } }
-                IconButton { icon: "clipboard_paste"; enabled: root.clipboard-count > 0; clicked => { root.command("paste"); } }
-                IconButton { icon: "rename"; enabled: root.selection-count == 1; clicked => { root.command("rename"); } }
-                IconButton { icon: "delete"; enabled: root.selection-count > 0; clicked => { root.command("delete"); } }
+                IconButton { icon: "cut"; accessible-text: "Cắt"; enabled: root.selection-count > 0; clicked => { root.command("cut"); } }
+                IconButton { icon: "copy"; accessible-text: "Sao chép"; enabled: root.selection-count > 0; clicked => { root.command("copy"); } }
+                IconButton { icon: "clipboard_paste"; accessible-text: "Dán"; enabled: root.clipboard-count > 0; clicked => { root.command("paste"); } }
+                IconButton { icon: "rename"; accessible-text: "Đổi tên"; enabled: root.selection-count == 1; clicked => { root.command("rename"); } }
+                IconButton { icon: "delete"; accessible-text: "Xoá"; enabled: root.selection-count > 0; clicked => { root.command("delete"); } }
 
                 Rectangle { width: Theme.s1; }
 
                 // Nén / giải nén: chỉ bật khi lựa chọn phù hợp.
                 IconButton {
                     icon: "folder_zip";
+                    accessible-text: "Nén thành ZIP";
                     enabled: root.selection-count > 0;
                     clicked => { root.command("compress"); }
                 }
                 IconButton {
                     icon: "folder_open";
+                    accessible-text: "Giải nén";
                     enabled: root.selection-count == 1 && root.selection-is-archive;
                     clicked => { root.command("extract"); }
                 }
@@ -452,21 +454,25 @@ export component AppWindow inherits Window {
                 // chuyển kiểu xem
                 IconButton {
                     icon: "list";
+                    accessible-text: "Xem dạng danh sách";
                     checked: root.view-mode == 0;
                     clicked => { root.set-view-mode(0); }
                 }
                 IconButton {
                     icon: "grid";
+                    accessible-text: "Xem dạng lưới";
                     checked: root.view-mode == 1;
                     clicked => { root.set-view-mode(1); }
                 }
                 IconButton {
                     icon: "eye";
+                    accessible-text: "Ẩn hoặc hiện mục ẩn";
                     checked: root.show-hidden;
                     clicked => { root.toggle-hidden(); }
                 }
                 IconButton {
                     icon: "arrow_sort";
+                    accessible-text: "Sắp xếp";
                     checked: root.sort-desc;
                     clicked => { root.sort-by(root.sort-column); }
                 }
@@ -490,10 +496,10 @@ export component AppWindow inherits Window {
                 padding-right: Theme.s2;
                 spacing: Theme.s1;
 
-                IconButton { icon: "arrow_left"; enabled: root.can-back; clicked => { root.go-back(); } }
-                IconButton { icon: "arrow_right"; enabled: root.can-forward; clicked => { root.go-forward(); } }
-                IconButton { icon: "arrow_upload"; clicked => { root.go-up(); } }
-                IconButton { icon: "arrow_clockwise"; clicked => { root.refresh(); } }
+                IconButton { icon: "arrow_left"; accessible-text: "Quay lại"; enabled: root.can-back; clicked => { root.go-back(); } }
+                IconButton { icon: "arrow_right"; accessible-text: "Tiến tới"; enabled: root.can-forward; clicked => { root.go-forward(); } }
+                IconButton { icon: "arrow_upload"; accessible-text: "Lên thư mục cha"; clicked => { root.go-up(); } }
+                IconButton { icon: "arrow_clockwise"; accessible-text: "Làm mới"; clicked => { root.refresh(); } }
 
                 Rectangle { width: Theme.s1; }
 
@@ -558,7 +564,7 @@ export component AppWindow inherits Window {
                         edited(t) => { root.filter-changed(t); }
                     }
                 }
-                if !root.filtering: IconButton { icon: "search"; clicked => { root.start-filter(); } }
+                if !root.filtering: IconButton { icon: "search"; accessible-text: "Tìm kiếm"; clicked => { root.start-filter(); } }
 
                 if root.clipboard-count > 0: ClipboardChip {
                     mode: root.clipboard-mode;
@@ -567,11 +573,13 @@ export component AppWindow inherits Window {
 
                 IconButton {
                     icon: "panel_left";
+                    accessible-text: "Ẩn hoặc hiện thanh bên";
                     checked: !root.show-sidebar;
                     clicked => { root.toggle-sidebar(); }
                 }
                 IconButton {
                     icon: "panel_right";
+                    accessible-text: "Ẩn hoặc hiện panel xem trước";
                     checked: root.show-preview;
                     clicked => { root.toggle-preview(); }
                 }
@@ -767,6 +775,33 @@ export component AppWindow inherits Window {
                             padding: Theme.s1;
                             spacing: 0px;
 
+                            // Trạng thái rỗng: một khung trắng không nói được gì,
+                            // người dùng không biết thư mục trống hay app hỏng.
+                            if root.rows.length == 0 && !root.busy && root.error-text == "": Rectangle {
+                                height: 160px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: Theme.s3;
+                                    FluentIcon {
+                                        name: "folder_open";
+                                        width: 32px;
+                                        height: 32px;
+                                        tint: Theme.text-tertiary;
+                                    }
+                                    Text {
+                                        text: "Thư mục này trống";
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.font-body;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Kéo tệp vào đây, hoặc dùng nút Mới để tạo mục đầu tiên.";
+                                        color: Theme.text-tertiary;
+                                        font-size: Theme.font-caption;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+                            }
                             if root.view-mode == 0: VerticalLayout {
                                 spacing: 0px;
                                 for row[i] in root.rows: Rectangle {

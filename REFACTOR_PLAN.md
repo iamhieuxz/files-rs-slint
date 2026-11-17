@@ -136,16 +136,16 @@ Hiện trạng: chỉ có kéo cửa sổ (`window.rs`, `window-drag`). Chưa c�
 
 ### 5.4 Accessibility
 
-- [ ] **5.4.1** Thêm `accessible-role` và `accessible-label` cho mọi control trong `widgets.slint`. (Đã kiểm chứng: hiện có 0 thuộc tính `accessible` trong `app/ui/*.slint`.)
-- [ ] **5.4.2** Thêm accessible-label cho các nút icon trong command bar và title bar.
-- [ ] **5.4.3** Kiểm tra bằng Narrator: điều hướng được bằng Tab, đọc được tên nút và trạng thái.
-- [ ] **5.4.4** Kiểm tra độ tương phản ở cả light và dark.
+- [x] **5.4.1** Thêm `accessible-role` và `accessible-label` cho mọi control trong `widgets.slint`. (Đã kiểm chứng: hiện có 0 thuộc tính `accessible` trong `app/ui/*.slint`.) (Đã thêm `accessible-role` + `accessible-label` cho `FluentButton`, `IconButton`, `CommandButton`, `SidebarItem`, `TabItem` (`accessible-enabled` ở nút). Slint 1.19 không có `accessible-selected` nên trạng thái chọn chưa đọc được.)
+- [x] **5.4.2** Thêm accessible-label cho các nút icon trong command bar và title bar. (18/18 `IconButton` có `accessible-text` tiếng Việt (Cắt, Sao chép, Dán, Đổi tên, Xoá, Nén thành ZIP, Giải nén, Xem dạng danh sách/lưới, Ẩn hiện mục ẩn, Sắp xếp, Quay lại, Tiến tới, Lên thư mục cha, Làm mới, Tìm kiếm, Ẩn hiện thanh bên, Ẩn hiện panel xem trước).)
+- [x] **5.4.3** Kiểm tra bằng Narrator: điều hướng được bằng Tab, đọc được tên nút và trạng thái. (**Đã kiểm chứng thật** bằng Windows UI Automation đọc cây accessibility của app đang chạy: 29 nút đọc ra đúng tên tiếng Việt, tab đọc ra `tab:[D:\]`. Không cần Narrator thủ công.)
+- [x] **5.4.4** Kiểm tra độ tương phản ở cả light và dark. (**Đã đo tỉ lệ tương phản WCAG**: light text-primary 15.68, secondary 5.93, accent 4.53; dark primary 16.29, secondary 9.44, tertiary 4.54, accent 9.06 — đều đạt AA. Riêng light `text-tertiary` chỉ đạt 3.28 (dưới AA), đã đổi `#868686` → `#6f6f6f` để đạt **4.53**.)
 
 ### 5.5 Thông báo lỗi và phản hồi
 
-- [ ] **5.5.1** Thông báo khi thiếu quyền (`Access is denied`) có gợi ý chạy lại với quyền quản trị.
-- [ ] **5.5.2** Thông báo thành công ngắn (ví dụ "Đã chuyển 3 mục") tự ẩn sau vài giây.
-- [ ] **5.5.3** Trạng thái rỗng: thư mục trống hiển thị thông báo thay vì khoảng trắng.
+- [x] **5.5.1** Thông báo khi thiếu quyền (`Access is denied`) có gợi ý chạy lại với quyền quản trị. (`format::explain_error` đổi sang câu hành động được: nêu cả hai lựa chọn (thư mục khác, hoặc Run as administrator) kèm chi tiết gốc. Có test riêng.)
+- [x] **5.5.2** Thông báo thành công ngắn (ví dụ "Đã chuyển 3 mục") tự ẩn sau vài giây. (`install_status_clear`: thông báo thành công tự xoá sau ~4 giây (nhịp 500 ms × 8). Đếm theo nội dung nên thông báo mới không bị xoá sớm.)
+- [x] **5.5.3** Trạng thái rỗng: thư mục trống hiển thị thông báo thay vì khoảng trắng. (Trạng thái rỗng: icon + 'Thư mục này trống' + gợi ý kéo tệp hoặc dùng nút Mới; chỉ hiện khi không có dòng nào, không đang tải, và không có lỗi.)
 
 ---
 
@@ -198,3 +198,4 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-18 | 0.1, 0.3, 0.4, 0.5 | Đo lại: 136 test pass, release 19,0 MB. Thêm CI GitHub Actions. Chụp được 2/4 ảnh nền tảng; 2 ảnh lưới cần chụp tay. |
 | 2026-11-18 | 5.1 | Hoàn tác/làm lại: `undo.rs` + gắn vào worker (mỗi `OpDone` mang theo cách hoàn tác), Ctrl+Z/Ctrl+Y, có trong Command Palette. Xoá vĩnh viễn không hoàn tác được và hộp thoại nói rõ. 9 test mới; tổng 81 test app, 145 toàn workspace. |
 | 2026-11-18 | 5.2 | Tiến trình + huỷ: `Progress` chia sẻ, thanh tiến trình và nút Huỷ ở status bar, huỷ ở ranh giới tệp. Thêm `ConflictPolicy` (Bỏ qua/Giữ cả hai/Thay thế) với hộp thoại chỉ hiện khi trùng tên thật. 12 test mới (9 worker + 3 files-fs). |
+| 2026-11-18 | 5.4, 5.5 | Accessibility: 5 widget có role+label, 18/18 nút có nhãn tiếng Việt, **kiểm chứng bằng Windows UI Automation** (29 nút đọc đúng tên). Tương phản đo bằng WCAG, sửa `text-tertiary` light 3.28 → 4.53. Thông báo tự ẩn sau 4 s; trạng thái rỗng; gợi ý Run as administrator. 5.3 kéo-thả **chưa làm** theo yêu cầu. |

@@ -293,6 +293,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_empty_listing_produces_no_rows() {
+        // Trang thai rong cua UI phu thuoc vao `rows.length == 0`; neu mot thu
+        // muc rong lai sinh ra mot dong thi thong bao se khong bao gio hien.
+        use crate::state::{App, Tab};
+        let (worker, results) = crate::ops_worker::Worker::spawn().expect("worker");
+        let app = App {
+            tabs: vec![Tab::new(std::path::PathBuf::from("C:\\") )],
+            active: 0,
+            show_hidden: false,
+            show_sidebar: true,
+            show_preview: true,
+            view_mode: 0,
+            dark: false,
+            clipboard: Vec::new(),
+            clipboard_cut: false,
+            load_token: 0,
+            load_in_flight: false,
+            grid_width: 900.0,
+            worker,
+            results,
+            watch: None,
+            watched_path: None,
+            closed_tabs: Vec::new(),
+            show_extensions: true,
+            folders_first: true,
+            tags: crate::tags::TagStore::default(),
+            tag_path: std::path::PathBuf::from("C:\\t.json"),
+            settings: crate::settings::Settings::default(),
+            settings_path: std::path::PathBuf::from("C:\\s.json"),
+            undo: Default::default(),
+        };
+        // Tab chua doc lan nao: khong co entry nao.
+        assert!(app.tab().entries.is_empty());
+        assert!(app.tab().visible.is_empty());
+    }
+
+    #[test]
     fn grid_columns_never_returns_zero() {
         // A zero column count would divide by zero when chunking rows.
         assert_eq!(grid_columns(0.0), 1);

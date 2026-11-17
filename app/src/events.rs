@@ -24,6 +24,48 @@ use crate::format;
 /// `invoke_from_event_loop` would be simpler but cannot be called from a thread
 /// that outlives the component; a timer keeps the handoff inside the event loop
 /// and makes shutdown deterministic.
+/// Xoá thông báo thành công sau vài giây.
+///
+/// Thông báo cũ nằm lại vô hạn sẽ khiến thanh trạng thái luôn nói về quá khứ;
+/// người dùng không còn tin nó phản ánh việc vừa xảy ra.
+pub fn install_status_clear(ui: &AppWindow) {
+    use std::time::Duration;
+    let w = ui.as_weak();
+    let timer = Timer::default();
+    timer.start(TimerMode::Repeated, Duration::from_millis(500), move || {
+        let Some(ui) = w.upgrade() else { return };
+        let text = ui.get_status_tertiary();
+        if text.is_empty() {
+            return;
+        }
+        // Đếm số nhịp đã giữ nguyên nội dung: nội dung đổi thì đếm lại.
+        thread_local! {
+            static LAST: std::cell::RefCell<(String, u32)> =
+                const { std::cell::RefCell::new((String::new(), 0)) };
+        }
+        let reached = LAST.with(|cell| {
+            let mut state = cell.borrow_mut();
+            if state.0 == text.as_str() {
+                state.1 += 1;
+            } else {
+                state.0 = text.to_string();
+                state.1 = 0;
+            }
+            // 500 ms × 8 = 4 giây.
+            state.1 >= 8
+        });
+        if reached {
+            ui.set_status_tertiary(SharedString::default());
+            LAST.with(|cell| {
+                let mut state = cell.borrow_mut();
+                state.0.clear();
+                state.1 = 0;
+            });
+        }
+    });
+    std::mem::forget(timer);
+}
+
 /// Đẩy tiến trình của thao tác đang chạy lên UI theo nhịp.
 ///
 /// Hỏi trạng thái thay vì nhận thông điệp cho từng tệp: kênh kết quả sẽ bị ngập

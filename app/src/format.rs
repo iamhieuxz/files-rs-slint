@@ -104,8 +104,8 @@ pub fn format_time(ms: Option<i64>) -> String {
 pub fn explain_error(code: &str, message: &str) -> String {
     match code {
         "access_denied" => format!(
-            "Không có quyền ghi vào thư mục này. Hãy chọn thư mục khác, hoặc chạy \
-             ứng dụng bằng tài khoản có quyền. ({message})"
+            "Không có quyền ghi vào thư mục này. Cách xử lý: chọn thư mục khác, \
+             hoặc chuột phải tệp .exe của ứng dụng → Run as administrator. ({message})"
         ),
         "not_found" => format!(
             "Không tìm thấy tệp hoặc thư mục — có thể nó vừa bị di chuyển hoặc xoá. ({message})"
@@ -277,6 +277,14 @@ mod tests {
         let text = explain_error("access_denied", "Access is denied. (os error 5)");
         assert!(text.contains("quyền"), "phải nói về quyền: {text}");
         assert!(text.contains("Access is denied"), "giữ chi tiết gốc để còn báo lỗi: {text}");
+    }
+
+    #[test]
+    fn access_denied_tells_the_user_what_to_do() {
+        // "(os error 5)" không nói được gì; câu này phải chỉ ra hành động.
+        let text = explain_error("access_denied", "Access is denied. (os error 5)");
+        assert!(text.contains("Run as administrator"), "thiếu gợi ý quyền: {text}");
+        assert!(text.contains("thư mục khác"), "thiếu lựa chọn thay thế");
     }
 
     #[test]
