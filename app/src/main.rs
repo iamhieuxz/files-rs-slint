@@ -20,6 +20,7 @@ mod logging;
 mod ops_worker;
 mod preview;
 mod settings;
+mod selection;
 mod state;
 mod tabs;
 mod navigation;
@@ -29,17 +30,17 @@ mod window;
 
 use files_core::{SortBy, SortDirection, SortSpec};
 use navigation::{apply_listing, build_sidebar, navigate_to, open_row, reload};
+use selection::{first_selected_visible, move_selection, select_row};
 use state::{apply_saved_ui, persist_ui, settings_path, tag_store_path, App, Tab};
 use tabs::{
     close_all_tabs, close_other_tabs, close_tab_at, close_tabs_side, cycle_tab, duplicate_tab,
     focus_menu_tab, menu_tab, reopen_closed_tab, sync_tabs,
 };
 use view::{
-    apply_shell_icon, fill_size_cell, grid_columns, push_status, push_view, refresh_theme,
-    to_slint_image,
+    apply_shell_icon, fill_size_cell, push_status, push_view, refresh_theme, to_slint_image,
 };
 use ops_worker::{Job, JobDone, Worker};
-use slint::{Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
 use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -606,119 +607,6 @@ fn menu(
 
 // ---------------------------------------------------------------- actions
 
-fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, mode: i32) {
-    {
-        let mut s = app.borrow_mut();
-        let active = s.active;
-        let tab = &mut s.tabs[active];
-        let Some(entry_index) = tab.visible.get(visible_index).copied() else {
-            return;
-        };
-        match mode {
-            // Shift: chọn cả khoảng từ mốc neo tới mục vừa bấm.
-            1 => {
-                let anchor = tab.anchor.unwrap_or(entry_index);
-                let lo = anchor.min(entry_index);
-                let hi = anchor.max(entry_index);
-                tab.selection = tab
-                    .visible
-                    .iter()
-                    .copied()
-                    .filter(|i| *i >= lo && *i <= hi)
-                    .collect();
-            }
-            // Ctrl: bật/tắt riêng mục này, giữ nguyên phần còn lại.
-            2 => {
-                if let Some(pos) = tab.selection.iter().position(|i| *i == entry_index) {
-                    tab.selection.remove(pos);
-                } else {
-                    tab.selection.push(entry_index);
-                }
-                tab.anchor = Some(entry_index);
-            }
-            // Bấm thường: chọn duy nhất mục này.
-            _ => {
-                tab.selection = vec![entry_index];
-                tab.anchor = Some(entry_index);
-            }
-        }
-    }
-    // Cập nhật TẠI CHỖ, không dựng lại model: `push_view` thay cả `VecModel`,
-    // làm Slint phá và tạo lại mọi `TouchArea`. Khi đó cú click thứ hai rơi
-    // vào một phần tử mới nên `double-clicked` không bao giờ chạy — đó chính
-    // là lý do double-click không mở được thư mục/tệp.
-    update_selection_flags(ui, app);
-    push_status(ui, app);
-
-    // Preview follows the last clicked row.
-    let entry = {
-        let s = app.borrow();
-        let tab = s.tab();
-        tab.visible
-            .get(visible_index)
-            .and_then(|i| tab.entries.get(*i))
-            .cloned()
-    };
-    match entry {
-        Some(e) => preview::show(ui, &e),
-        None => preview::clear(ui),
-    }
-}
-
-/// Flip the `selected` flag on the existing row models.
-///
-/// `set_row_data` mutates one row in place, so the `TouchArea` instances and
-/// their double-click state survive the click.
-fn update_selection_flags(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let a = app.borrow();
-    let tab = a.tab();
-    let rows = ui.get_rows();
-    for (visible_index, entry_index) in tab.visible.iter().enumerate() {
-        let selected = tab.selection.contains(entry_index);
-        if let Some(mut row) = rows.row_data(visible_index) {
-            if row.selected != selected {
-                row.selected = selected;
-                rows.set_row_data(visible_index, row);
-            }
-        }
-    }
-
-    // Grid là model lồng nhau: cập nhật từng hàng một.
-    let per_row = grid_columns(a.grid_width);
-    let grid = ui.get_grid_rows();
-    for (row_index, line) in tab.visible.chunks(per_row).enumerate() {
-        if let Some(line_model) = grid.row_data(row_index) {
-            if let Some(inner) = line_model.as_any().downcast_ref::<VecModel<FileRow>>() {
-                for (col, entry_index) in line.iter().enumerate() {
-                    let selected = tab.selection.contains(entry_index);
-                    if let Some(mut tile) = inner.row_data(col) {
-                        if tile.selected != selected {
-                            tile.selected = selected;
-                            inner.set_row_data(col, tile);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Nút "Giải nén" phụ thuộc lựa chọn hiện tại.
-    let is_archive = tab.selection.len() == 1
-        && tab
-            .selected_entries()
-            .first()
-            .and_then(|e| e.extension.as_deref())
-            .map(|x| x.eq_ignore_ascii_case("zip"))
-            .unwrap_or(false);
-    // `selection-count` điều khiển trạng thái bật/tắt của các nút trên command
-    // bar (Copy, Cut, Delete, Nén…). Quên cập nhật nó thì các nút đứng im ở
-    // trạng thái disable dù dòng đã được chọn.
-    let count = tab.selection.len() as i32;
-    drop(a);
-    ui.set_selection_count(count);
-    ui.set_selection_is_archive(is_archive);
-}
-
 fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     // Mục thẻ mang uid trong mã lệnh, nên phải bắt trước khi so khớp chuỗi.
     if let Some(uid) = id.strip_prefix("tag-set:") {
@@ -869,16 +757,6 @@ fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         _ => {}
     }
 }
-
-fn first_selected_visible(app: &Rc<RefCell<App>>) -> Option<usize> {
-    let s = app.borrow();
-    let tab = s.tab();
-    tab.visible
-        .iter()
-        .position(|i| tab.selection.contains(i))
-}
-
-// ---------------------------------------------------------------- command palette
 
 /// One entry in the command palette.
 ///
@@ -1107,28 +985,6 @@ fn menu_tag(tag: &tags::Tag, attached: bool) -> MenuItem {
             (tags::parse_hex(&tag.color).unwrap_or(0x808080) & 0xFF) as u8,
         ),
         has_dot: true,
-    }
-}
-
-fn move_selection(ui: &AppWindow, app: &Rc<RefCell<App>>, down: bool) {
-    let next = {
-        let s = app.borrow();
-        let tab = s.tab();
-        let cur = first_selected_visible(app);
-        match (cur, down) {
-            (None, _) => Some(0usize),
-            (Some(i), true) => {
-                if i + 1 < tab.visible.len() {
-                    Some(i + 1)
-                } else {
-                    Some(i)
-                }
-            }
-            (Some(i), false) => Some(i.saturating_sub(1)),
-        }
-    };
-    if let Some(i) = next {
-        select_row(ui, app, i, 0);
     }
 }
 
