@@ -121,9 +121,6 @@ export component AppWindow inherits Window {
     // Thông báo ngắn (đã tạo, đã sao chép…). Tách khỏi `status-tertiary` để
     // `push_status` không xoá mất thông báo mỗi lần danh sách được vẽ lại.
     in-out property <string> status-message;
-    // Có đang rê chuột lên breadcrumb; tooltip ở vùng nội dung đọc cờ này
-    // vì id của TouchArea nằm ngoài phạm vi phần tử đó.
-    in-out property <bool> crumb-hovered: false;
     in-out property <string> error-text;
     in-out property <bool> can-back: false;
     in-out property <bool> can-forward: false;
@@ -231,6 +228,8 @@ export component AppWindow inherits Window {
     callback refresh();
     callback address-submitted(string);
     callback start-edit-address();
+    // Bấm đúp thanh địa chỉ: sao chép đường dẫn thư mục đang mở.
+    callback copy-current-path();
     callback sort-by(string);
     callback toggle-hidden();
     callback toggle-sidebar();
@@ -535,10 +534,11 @@ export component AppWindow inherits Window {
                             width: parent.width;
                             height: parent.height;
                             crumb-hover := TouchArea {
+                                // Bấm đúp vào thanh địa chỉ = sao chép đường dẫn
+                                // đang mở. Một cú bấm để trống để không giành
+                                // click với vùng bên dưới.
                                 clicked => { }
-                                changed has-hover => {
-                                    root.crumb-hovered = self.has-hover;
-                                }
+                                double-clicked => { root.copy-current-path(); }
                             }
                         }
                         HorizontalLayout {
@@ -1500,31 +1500,9 @@ export component AppWindow inherits Window {
                     // vùng trống: chuột phải ra menu nền, double-click lên một cấp
                 }
                 }
-                // Tooltip đường dẫn đầy đủ khi rê chuột lên breadcrumb. Khai
-                // báo CUỐI vùng nội dung để vẽ đè lên danh sách bên dưới.
-                if root.crumb-hovered && !root.editing-address: Rectangle {
-                    x: Theme.s3;
-                    y: Theme.s2;
-                    width: min(parent.width - Theme.s6, 760px);
-                    height: 44px;
-                    border-radius: Theme.r-md;
-                    background: Theme.solid-tertiary;
-                    border-width: 1px;
-                    border-color: Theme.stroke-strong;
-                    drop-shadow-blur: 16px;
-                    drop-shadow-color: #00000033;
-                    Text {
-                        x: Theme.s3;
-                        y: Theme.s2;
-                        width: parent.width - Theme.s6;
-                        height: parent.height - Theme.s4;
-                        text: root.address-text;
-                        color: Theme.text-primary;
-                        font-size: Theme.font-caption;
-                        wrap: word-wrap;
-                        vertical-alignment: center;
-                    }
-                }
+                // Tooltip đường dẫn khi rê chuột lên breadcrumb đã được bỏ theo
+                // yêu cầu: nó che mất danh sách tệp và không thêm thông tin gì
+                // mà thanh địa chỉ chưa hiện.
 
                 if root.drag-active && root.drag-target == "left": Rectangle {
                     x: 0;

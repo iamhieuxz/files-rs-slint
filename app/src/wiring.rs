@@ -746,6 +746,26 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         });
     }
     {
+        let (w, a) = (ui.as_weak(), app.clone());
+        ui.on_copy_current_path(move || {
+            let Some(ui) = w.upgrade() else { return };
+            // Bấm đúp thanh địa chỉ: sao chép đường dẫn thư mục đang mở, không
+            // phải đường dẫn của mục đang chọn.
+            let path = {
+                let s = a.borrow();
+                s.tab().current().to_string_lossy().into_owned()
+            };
+            match files_fs::copy_text_to_clipboard(&path) {
+                Ok(()) => ui.set_status_message(SharedString::from(
+                    format!("Đã sao chép đường dẫn: {path}").as_str(),
+                )),
+                Err(e) => ui.set_error_text(SharedString::from(
+                    format!("Không sao chép được: {}", e.message).as_str(),
+                )),
+            }
+        });
+    }
+    {
         let w = ui.as_weak();
         ui.on_dialog_cancel(move || {
             let Some(ui) = w.upgrade() else { return };
