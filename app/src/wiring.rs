@@ -159,6 +159,15 @@ fn show_row_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, i: i32, x: f32, y: f32) {
             i >= 0 && in_recycle,
             false,
         ),
+        // Làm rỗng: không cần chọn mục nào, chỉ cần đang ở Thùng rác.
+        menu(
+            "empty-recycle-bin",
+            "Làm rỗng Thùng rác",
+            "delete",
+            "",
+            in_recycle,
+            false,
+        ),
         menu("", "", "", "", false, true),
         // Thẻ màu: đổi màu icon của tệp hoặc thư mục.
         menu_header("Thẻ màu"),
@@ -212,28 +221,39 @@ fn show_row_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, i: i32, x: f32, y: f32) {
 
 fn show_background_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, x: f32, y: f32) {
     let can_paste = !a.borrow().clipboard.is_empty();
+    // Đang ở Thùng rác: "Mới"/"Dán" vô nghĩa, còn "Làm rỗng" chỉ có ở đây.
+    let in_recycle = a.borrow().tab().recycle;
     let pinned_now = {
         let a = a.borrow();
         let here = a.tab().current().to_string_lossy().into_owned();
         a.settings.pinned_folders.iter().any(|p| p == &here)
     };
     let items = vec![
+        // Làm rỗng đặt lên đầu khi ở Thùng rác: đó là hành động chính ở đó.
+        menu(
+            "empty-recycle-bin",
+            "Làm rỗng Thùng rác",
+            "delete",
+            "",
+            in_recycle,
+            false,
+        ),
         menu(
             "new-folder",
             "Thư mục mới",
             "folder",
             "Ctrl+Shift+N",
-            true,
+            !in_recycle,
             false,
         ),
-        menu("new-file", "Tệp mới", "document", "", true, false),
+        menu("new-file", "Tệp mới", "document", "", !in_recycle, false),
         menu("", "", "", "", false, true),
         menu(
             "paste",
             "Dán",
             "clipboard_paste",
             "Ctrl+V",
-            can_paste,
+            can_paste && !in_recycle,
             false,
         ),
         menu(
