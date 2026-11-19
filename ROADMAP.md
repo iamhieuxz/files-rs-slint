@@ -58,8 +58,10 @@ Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
   - 6 test trên thư mục dựng sẵn. Lệnh `restore-from-recycle-bin` + mục menu chỉ hiện khi đang ở Thùng rác.
   - **Chưa kiểm chứng end-to-end:** môi trường phát triển bị sandbox (`CodexSandboxUsers` chỉ có `ReadAndExecute`) chặn ghi `$Recycle.Bin`, nên `SHFileOperationW` trả `rc=0` mà xoá vĩnh viễn. Hai test end-to-end đánh dấu `#[ignore]`; chạy tay trên máy không sandbox:
     `cargo test -p files-fs --test recycle_restore -- --ignored --nocapture`
-- [ ] **B3. Khôi phục tất cả** — T (phụ thuộc B2).
-- [ ] **B4. Nhóm theo thư mục gốc / ngày xoá** — T (phụ thuộc B1).
+- [x] **B3. Khôi phục tất cả** — T (phụ thuộc B2).
+  - `ask_restore_all_from_bin` hỏi xác nhận, `restore_all_from_bin` chạy hàng loạt. Đích đã có tệp cùng tên thì **bỏ qua và đếm riêng**, không ghi đè; thông báo tách "đã khôi phục" khỏi "bỏ qua vì trùng tên".
+- [x] **B4. Nhóm theo thư mục gốc / ngày xoá** — T (phụ thuộc B1).
+  - `GroupBy::{OriginalFolder, DeletedDate}` + `recycle_only()` để menu thường không hiện hai tiêu chí này. `grouped_rows` thay `Entry.path` bằng thư mục cha của đường dẫn gốc trước khi nhóm, vì mục trong thùng chỉ mang đường dẫn `$R`.
 
 **Rủi ro:** COM + `IContextMenu` dễ rò bộ nhớ và treo; phải có test trên máy Windows thật, không chạy trên CI không có Thùng rác.
 
