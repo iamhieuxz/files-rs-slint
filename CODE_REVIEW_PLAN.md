@@ -72,9 +72,9 @@ Thứ tự theo mức độ ưu tiên. Mỗi mục có test hồi quy riêng.
 - [x] **7.8** `delete_to_recycle_bin` đếm theo thực tế (mục không còn trên đĩa) thay vì `paths.len()`.
 - [x] **7.9** Kiểm tra tên: thêm `validate_name` (rỗng, `.`/`..`, ký tự cấm, tên thiết bị DOS, dấu chấm/khoảng trắng cuối), dùng trong `rename`, `create_folder`, `create_file`. Test: `unsafe_names_are_rejected_and_normal_ones_pass`, `creating_with_a_device_name_is_refused`.
 - [x] **7.10** Ghi settings/tags không nguyên tử và mất bản hỏng: thêm `app/src/persist.rs` (`write_atomic`, `quarantine`); file parse lỗi được đổi tên thành `.corrupt` trước khi dùng mặc định. 3 test trong `persist`.
-- [ ] **7.11** `create_zip` để lại zip dở khi lỗi, đi theo symlink/junction; `extract_zip` ghi đè file có sẵn. Chưa làm.
-- [ ] **7.12** 7 chỗ `mem::forget(timer)` (không dừng khi đóng cửa sổ). Chưa làm.
-- [ ] **7.13** I/O đồng bộ trên UI thread (`is_dir`, `read_dir` trong `navigation.rs`, `file_ops.rs`, `drag.rs`, `tabs.rs`, `wiring.rs`, `preview.rs`). Chưa làm.
+- [x] **7.11** `create_zip` để lại zip dở khi lỗi, đi theo symlink/junction; `extract_zip` ghi đè file có sẵn. **Đã sửa**: `create_zip` ghi ra `.<ten>.partial` rồi mới `rename`, lỗi thì dọn tệp tạm; `add_tree` bỏ qua reparse point; `extract_zip` dùng `create_new` nên không ghi đè tệp có sẵn. Test: `a_failed_zip_leaves_no_partial_archive`, `extraction_never_overwrites_a_file_that_already_exists`.
+- [x] **7.12** 7 chỗ `mem::forget(timer)` (không dừng khi đóng cửa sổ). **Đã sửa**: các pump trả `Rc<Timer>`, `LiveWindow` sở hữu và `stop()` khi đóng; `main` giữ sweeper; không còn `mem::forget` trong mã sản xuất.
+- [x] **7.13** I/O đồng bộ trên UI thread (`is_dir`, `read_dir` trong `navigation.rs`, `file_ops.rs`, `drag.rs`, `tabs.rs`, `wiring.rs`, `preview.rs`). **Đã sửa**: thêm `files_fs::previewdata` (`PreviewKind`/`PreviewData`) chạy trên luồng `files-bg`; panel xem trước không còn đọc đĩa trên UI thread. Bỏ các `is_dir()` đồng bộ ở điều hướng, mở lại tab, thả tệp và trong lúc kéo — việc kiểm tra do `Job::Load`/worker báo lỗi. 5 test mới trong `previewdata`.
 - [ ] **7.14** `native_drop.rs`: 17 khối `unsafe`, chỉ 6 có `// SAFETY:`. Chưa làm.
 
 Kết quả đo sau 7.1 đến 7.10: `cargo fmt --check` 0; clippy với `-D warnings` 0 cảnh báo; `cargo test --workspace` toàn bộ pass (files-fs `ops` 34, app 117).
@@ -91,6 +91,8 @@ Mỗi mục đã được tái hiện bằng chương trình kiểm chứng riê
 - [x] **8.6** `validate_name` chưa được export: thêm vào `lib.rs` để tầng trên dùng chung.
 
 Kết quả đo sau 8.1–8.6: `cargo fmt --check` 0; clippy `-D warnings` 0 cảnh báo; `cargo test --workspace` pass (files-fs `ops` 36, app 119, tổng 241).
+
+Kết quả đo sau 7.11–7.13: `cargo fmt --check` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo test --workspace` pass (files-fs lib 47, `archive` 13, `ops` 36; app 119; tổng 248).
 
 ## Ngoài phạm vi đợt này
 

@@ -264,12 +264,8 @@ pub fn drop_paths(
     if sources.is_empty() {
         return;
     }
-    if !target.is_dir() {
-        ui.set_error_text(SharedString::from(
-            format!("Không thả được vào: {}", target.display()).as_str(),
-        ));
-        return;
-    }
+    // Bỏ kiểm tra `is_dir()` đồng bộ: worker sẽ báo lỗi nếu đích không dùng
+    // được, và một lời gọi đĩa ở đây làm đứng UI khi đích nằm trên ổ mạng.
     operations::begin(
         ui,
         app,

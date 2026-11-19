@@ -11,7 +11,7 @@ use crate::state::{App, Pane};
 use crate::view::{
     apply_shell_icon, fill_size_cell, push_pane, push_status, push_view, to_slint_image,
 };
-use crate::{logging, navigation, operations};
+use crate::{logging, navigation, operations, preview};
 use navigation::{apply_listing, reload_pane};
 use slint::{ComponentHandle, SharedString, Timer, TimerMode};
 use std::cell::RefCell;
@@ -40,7 +40,7 @@ fn reload_both(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 ///
 /// Thông báo cũ nằm lại vô hạn sẽ khiến thanh trạng thái luôn nói về quá khứ;
 /// người dùng không còn tin nó phản ánh việc vừa xảy ra.
-pub fn install_status_clear(ui: &AppWindow) {
+pub fn install_status_clear(ui: &AppWindow) -> Rc<Timer> {
     use std::time::Duration;
     let w = ui.as_weak();
     let timer = Timer::default();
@@ -75,14 +75,16 @@ pub fn install_status_clear(ui: &AppWindow) {
             });
         }
     });
-    std::mem::forget(timer);
+    // Caller owns the timer: dropping it stops the pump. `mem::forget` used to
+    // keep it alive forever, which kept the window's `App` and worker alive too.
+    Rc::new(timer)
 }
 
 /// Đẩy tiến trình của thao tác đang chạy lên UI theo nhịp.
 ///
 /// Hỏi trạng thái thay vì nhận thông điệp cho từng tệp: kênh kết quả sẽ bị ngập
 /// với một thư mục lớn, còn UI chỉ cần vẽ lại vài chục lần mỗi giây.
-pub fn install_progress_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+pub fn install_progress_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Rc<Timer> {
     use std::time::Duration;
     let (w, a) = (ui.as_weak(), app.clone());
     // Đếm nhịp toast thành công/lỗi; mỗi nhịp 120 ms, ~4 giây thì tự đóng.
@@ -154,10 +156,10 @@ pub fn install_progress_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             }
         }
     });
-    std::mem::forget(timer);
+    Rc::new(timer)
 }
 
-pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Rc<Timer> {
     let (w, a) = (ui.as_weak(), app.clone());
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
@@ -411,17 +413,44 @@ pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                     let image = to_slint_image(&icon);
                     apply_shell_icon(&ui, &a, pane, &path, image);
                 }
+                Ok(JobDone::Preview { path, data, token }) => {
+                    // Chỉ áp dụng khi mục vẫn còn được chọn: người dùng có thể
+                    // đã chuyển sang dòng khác trong lúc đọc nền.
+                    let entry = {
+                        let s = a.borrow();
+                        s.tab_for(s.active_pane)
+                            .and_then(|tab| {
+                                tab.selected_entries()
+                                    .first()
+                                    .map(|e| (*e).clone())
+                                    .or_else(|| {
+                                        tab.visible
+                                            .first()
+                                            .and_then(|i| tab.entries.get(*i))
+                                            .cloned()
+                                    })
+                            })
+                            .filter(|e| {
+                                e.path == path.to_string_lossy()
+                                    && s.pane_load(s.active_pane).token == token
+                            })
+                    };
+                    if let Some(entry) = entry {
+                        preview::apply_data(&ui, &entry, data);
+                    }
+                }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
             }
         }
     });
-    // The timer must stay alive for the lifetime of the window.
-    std::mem::forget(timer);
+    // The caller keeps the timer alive for as long as the window exists and
+    // drops it on close, so the closure (and the `App` it holds) is released.
+    Rc::new(timer)
 }
 
 /// Poll the directory watcher and refresh when the folder changes.
-pub fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+pub fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Rc<Timer> {
     let (w, a) = (ui.as_weak(), app.clone());
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, Duration::from_millis(400), move || {
@@ -444,5 +473,5 @@ pub fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             reload_pane(&ui, &a, pane);
         }
     });
-    std::mem::forget(timer);
+    Rc::new(timer)
 }

@@ -162,12 +162,12 @@ Các mục dưới đây phản ánh review ngày 2026-11-19. Kiểm tra lại c
 - [ ] Chặn copy/move thư mục vào chính hậu duệ của nó và chỉ fallback rename khi khác volume. *(đã xong)*
 - [ ] Sửa redo tạo đúng tên tệp, không thêm `.txt`, và khôi phục action khi undo/redo thất bại. *(đã xong)*
 - [ ] Làm replace an toàn bằng staging/rollback; validate tên create/rename; không bỏ qua lỗi xóa. *(đã xong)*
-- [ ] Sở hữu và dừng timer/worker khi đóng cửa sổ; sửa watcher bỏ sót sự kiện và stale pane.
-- [ ] Đưa I/O khỏi UI thread, ảo hóa danh sách lớn và đo lại UI với 10.000 mục.
+- [ ] Sở hữu và dừng timer/worker khi đóng cửa sổ; sửa watcher bỏ sót sự kiện và stale pane. *(timer đã xong; watcher/stale pane còn)*
+- [ ] Đưa I/O khỏi UI thread, ảo hóa danh sách lớn và đo lại UI với 10.000 mục. *(preview và các `is_dir` đồng bộ đã xong; virtualization còn)*
 - [ ] Báo đúng kết quả xóa từng mục; ghi settings/tags nguyên tử và không ghi đè chéo giữa cửa sổ. *(đã xong)*
 - [ ] Hoàn thiện accessibility cho hàng tệp, trạng thái chọn và thao tác bàn phím.
-- [ ] Thêm `cargo fmt --check` và `git diff --check` vào quy trình CI. *(fmt đã có trong CI; `git diff --check` vẫn cần)*
-- [ ] Làm sạch archive: không để zip dở, không đi theo junction, không ghi đè khi giải nén.
+- [ ] Thêm `git diff --check` vào quy trình CI. *(fmt đã có trong CI)*
+- [ ] Làm sạch archive: không để zip dở, không đi theo junction, không ghi đè khi giải nén. *(đã xong)*
 - [ ] Bổ sung `// SAFETY:` cho các khối `unsafe` còn thiếu trong `native_drop.rs`.
 - [ ] Chỉ coi file JSON là hỏng khi nội dung không rỗng nhưng parse lỗi; không quarantine file 0 byte.
 - [ ] Cho phép rename chỉ khác hoa/thường và giới hạn độ dài tên ở 255 ký tự.

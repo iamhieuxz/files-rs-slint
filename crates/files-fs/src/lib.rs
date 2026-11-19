@@ -13,6 +13,7 @@ pub mod listing;
 pub mod log;
 pub mod openwith;
 pub mod ops;
+pub mod previewdata;
 pub mod recycle;
 pub mod search;
 pub mod shellicon;
@@ -34,6 +35,7 @@ pub use ops::{
     move_into, move_into_with, open_terminal, rename, rotate_image_clockwise, shortcut_target,
     suggested_copy_name, validate_name, ConflictPolicy,
 };
+pub use previewdata::{preview_data, PreviewData, PreviewKind, FOLDER_COUNT_LIMIT, TEXT_LIMIT};
 pub use recycle::{
     bin_path as recycle_bin_path, can_browse as can_browse_recycle_bin, can_restore,
     empty as empty_recycle_bin, list as list_recycle_bin, RecycleItem,

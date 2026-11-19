@@ -159,6 +159,55 @@ fn extracting_a_missing_archive_reports_an_error() {
 }
 
 #[test]
+fn extraction_never_overwrites_a_file_that_already_exists() {
+    // Giải nén vào thư mục đã có tệp cùng tên: dữ liệu người dùng phải thắng.
+    let dir = scratch("zip-no-overwrite");
+    let src = dir.join("nguon");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.txt"), b"tu archive").unwrap();
+    let zip_path = dir.join("nguon.zip");
+    archive::create_zip(std::slice::from_ref(&src), &zip_path).unwrap();
+
+    let out = dir.join("out");
+    std::fs::create_dir_all(out.join("nguon")).unwrap();
+    std::fs::write(out.join("nguon/a.txt"), b"du lieu cua nguoi dung").unwrap();
+
+    let count = archive::extract_zip(&zip_path, &out).expect("extract không được lỗi");
+
+    assert_eq!(count, 0, "không mục nào được ghi đè");
+    assert_eq!(
+        std::fs::read(out.join("nguon/a.txt")).unwrap(),
+        b"du lieu cua nguoi dung",
+        "tệp có sẵn phải nguyên vẹn"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_failed_zip_leaves_no_partial_archive() {
+    // Nguồn không tồn tại: archive dở không được để lại, vì nó trông giống
+    // một tệp zip hợp lệ và người dùng sẽ tưởng đã nén xong.
+    let dir = scratch("zip-partial");
+    let missing = dir.join("khong-co");
+    let dest = dir.join("ket-qua.zip");
+
+    let result = archive::create_zip(std::slice::from_ref(&missing), &dest);
+
+    assert!(result.is_err(), "phải báo lỗi");
+    assert!(!dest.exists(), "không được để lại archive đích");
+    let leftovers: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        leftovers.iter().all(|n| !n.ends_with(".partial")),
+        "không được để lại tệp tạm: {leftovers:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_corrupt_archive_is_reported_as_invalid() {
     let dir = scratch("zipcorrupt");
     let bad = dir.join("bad.zip");

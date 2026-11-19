@@ -58,7 +58,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Dọn cửa sổ đã đóng theo nhịp; không có bước này thì một cửa sổ đóng vẫn
     // giữ luồng nền và watcher của nó.
-    install_window_sweeper();
+    let _sweeper = install_window_sweeper();
 
     slint::run_event_loop()
 }
@@ -69,7 +69,10 @@ fn main() -> Result<(), slint::PlatformError> {
 ///
 /// Slint kết thúc event loop khi cửa sổ cuối cùng đóng, nhưng danh sách của ta
 /// phải được dọn để không giữ `App` (kèm luồng nền) của cửa sổ đã đóng.
-fn install_window_sweeper() {
+///
+/// Timer được giữ trong `main` suốt vòng đời event loop: thả nó ra là bộ dọn
+/// ngừng chạy, nên `mem::forget` chỉ che mất việc sở hữu chứ không cần thiết.
+fn install_window_sweeper() -> slint::Timer {
     use std::time::Duration;
     let timer = slint::Timer::default();
     timer.start(
@@ -82,7 +85,7 @@ fn install_window_sweeper() {
             }
         },
     );
-    std::mem::forget(timer);
+    timer
 }
 
 #[cfg(test)]

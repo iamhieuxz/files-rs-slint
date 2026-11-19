@@ -125,6 +125,10 @@ pub fn archive_name(sources: &[PathBuf]) -> String {
 ///
 /// Directory trees are stored with their relative paths so extraction recreates
 /// the structure instead of dumping every file into one folder.
+///
+/// The archive is written to a temporary file next to `dest` and renamed only
+/// after `finish` succeeds, so a failed or cancelled run never leaves a
+/// truncated `.zip` that looks like a valid archive.
 pub fn create_zip(sources: &[PathBuf], dest: &Path) -> Result<usize, FsError> {
     // `File::create` truncates, so overwriting here destroys data before any
     // error can be reported. This also catches zipping a file onto itself:
@@ -135,7 +139,31 @@ pub fn create_zip(sources: &[PathBuf], dest: &Path) -> Result<usize, FsError> {
             format!("Đã tồn tại: {}", dest.display()),
         ));
     }
-    let file = File::create(dest).map_err(FsError::from)?;
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let stem = dest
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "archive".into());
+    let temp = crate::ops::free_path(parent, &format!(".{stem}"), ".partial");
+
+    let count = match write_zip(sources, &temp) {
+        Ok(count) => count,
+        Err(e) => {
+            // Không để lại archive dở: nó trông giống một tệp zip hợp lệ.
+            let _ = std::fs::remove_file(&temp);
+            return Err(e);
+        }
+    };
+    std::fs::rename(&temp, dest).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        FsError::from(e)
+    })?;
+    Ok(count)
+}
+
+/// Write the archive to `path`. Split out so `create_zip` owns the cleanup.
+fn write_zip(sources: &[PathBuf], path: &Path) -> Result<usize, FsError> {
+    let file = File::create(path).map_err(FsError::from)?;
     let mut zip = zip::ZipWriter::new(file);
     let options: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -166,8 +194,14 @@ fn add_tree(
         zip.add_directory(zip_name(rel), options).map_err(zip_err)?;
         for child in std::fs::read_dir(path).map_err(FsError::from)? {
             let child = child.map_err(FsError::from)?;
+            let child_path = child.path();
+            // Không đi theo junction/symlink: chúng có thể tạo vòng lặp và kéo
+            // cả cây ngoài thư mục được chọn vào archive.
+            if crate::ops::is_reparse_point(&child_path) {
+                continue;
+            }
             let child_rel = rel.join(child.file_name());
-            count += add_tree(zip, &child.path(), &child_rel, options)?;
+            count += add_tree(zip, &child_path, &child_rel, options)?;
         }
     } else {
         zip.start_file(zip_name(rel), options).map_err(zip_err)?;
@@ -196,7 +230,9 @@ fn zip_name(rel: &Path) -> String {
 /// Extract `archive` into `target_dir`.
 ///
 /// Returns the number of entries written. Paths are validated so a crafted
-/// archive cannot write outside the target folder.
+/// archive cannot write outside the target folder, and an entry whose target
+/// already exists is skipped rather than overwritten — giải nén không được phá
+/// dữ liệu người dùng đã có trong thư mục đích.
 pub fn extract_zip(archive: &Path, target_dir: &Path) -> Result<usize, FsError> {
     let file = File::open(archive).map_err(FsError::from)?;
     let mut zip = zip::ZipArchive::new(file)
@@ -232,7 +268,17 @@ pub fn extract_zip(archive: &Path, target_dir: &Path) -> Result<usize, FsError> 
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(FsError::from)?;
         }
-        let mut f = File::create(&out).map_err(FsError::from)?;
+        // `create_new` từ chối ghi đè: một mục đã có sẵn là dữ liệu của người
+        // dùng, không phải thứ archive được phép thay thế.
+        let mut f = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&out)
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(FsError::from(e)),
+        };
         std::io::copy(&mut entry, &mut f).map_err(FsError::from)?;
         count += 1;
     }

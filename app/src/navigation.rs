@@ -236,6 +236,7 @@ pub fn apply_listing(
         };
         if let Some(entry) = first {
             preview::show(ui, &entry);
+            crate::panes::queue_preview(app, &entry);
         } else {
             preview::clear(ui);
         }
@@ -243,13 +244,10 @@ pub fn apply_listing(
 }
 
 pub fn navigate_to(ui: &AppWindow, app: &Rc<RefCell<App>>, target: PathBuf) {
-    if !target.is_dir() {
-        ui.set_error_text(SharedString::from(
-            format!("Không tìm thấy thư mục: {}", target.display()).as_str(),
-        ));
-        ui.set_busy(false);
-        return;
-    }
+    // Không kiểm tra `is_dir()` ở đây: đó là một lời gọi đĩa đồng bộ trên UI
+    // thread, và trên ổ mạng nó có thể treo vài giây. `Job::Load` đã báo lỗi
+    // `not_found`/`not_a_directory` và `events.rs` khôi phục lịch sử về thư mục
+    // cha khi tải hỏng, nên thông báo cho người dùng vẫn đúng.
     {
         let mut s = app.borrow_mut();
         s.tab_mut().history.push(target);

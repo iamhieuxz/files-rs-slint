@@ -9,20 +9,12 @@
 use crate::format;
 use crate::{AppWindow, PropRow};
 use files_core::{Entry, EntryKind};
-use slint::{Image, ModelRc, SharedString, VecModel};
-use std::fs::File;
-use std::io::Read;
+use slint::{ModelRc, SharedString, VecModel};
 use std::path::Path;
 
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico"];
-const TEXT_EXTS: &[&str] = &[
-    "txt", "md", "rs", "toml", "json", "log", "csv", "ini", "cfg", "yaml", "yml", "xml", "html",
-    "css", "js", "ts", "py", "bat", "ps1", "cmd", "sh",
-];
-const TEXT_LIMIT: u64 = 16 * 1024;
 /// A folder with more entries than this is reported as "N+" instead of being
 /// counted; counting a huge tree would block the UI thread.
-const FOLDER_COUNT_LIMIT: usize = 5000;
+use files_fs::FOLDER_COUNT_LIMIT;
 
 fn set(ui: &AppWindow, kind: &str, title: &str) {
     ui.set_preview_kind(SharedString::from(kind));
@@ -89,54 +81,61 @@ fn folder_size_text(_entry: &Entry) -> String {
     "—".into()
 }
 
-fn folder_count_text(entry: &Entry) -> String {
-    match std::fs::read_dir(&entry.path) {
-        Ok(iter) => {
-            let mut n = 0usize;
-            for _ in iter.take(FOLDER_COUNT_LIMIT + 1) {
-                n += 1;
-            }
-            if n > FOLDER_COUNT_LIMIT {
-                format!("{FOLDER_COUNT_LIMIT}+")
-            } else {
-                n.to_string()
-            }
-        }
-        Err(_) => "—".into(),
+/// Số mục con được điền sau, từ luồng nền. Hiện "…" cho tới lúc có kết quả.
+fn folder_count_text(_entry: &Entry) -> String {
+    "…".into()
+}
+
+/// Định dạng số mục con khi luồng nền đã đếm xong.
+pub fn folder_count_label(count: Option<usize>) -> String {
+    match count {
+        Some(n) if n > FOLDER_COUNT_LIMIT => format!("{FOLDER_COUNT_LIMIT}+"),
+        Some(n) => n.to_string(),
+        None => "—".into(),
     }
 }
 
-/// Update the panel for the selected entry.
+/// Loại dữ liệu xem trước cần cho `entry`.
+pub fn kind_for(entry: &Entry) -> files_fs::PreviewKind {
+    files_fs::PreviewKind::for_entry(
+        entry.extension.as_deref(),
+        entry.size,
+        entry.kind == EntryKind::Directory,
+    )
+}
+
+/// Cập nhật panel với thông tin đã có sẵn trong `Entry`.
+///
+/// Không chạm đĩa: ảnh, văn bản và số mục con do luồng nền điền sau qua
+/// [`apply_data`]. Nhờ vậy chọn một dòng trong thư mục mạng không làm đứng cửa
+/// sổ.
 pub fn show(ui: &AppWindow, entry: &Entry) {
     ui.set_props(ModelRc::new(VecModel::from(properties(entry))));
     set(ui, "info", &entry.name);
+}
 
-    if entry.kind == EntryKind::Directory {
-        return;
-    }
-
-    let ext = entry
-        .extension
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let path = Path::new(&entry.path);
-
-    if IMAGE_EXTS.contains(&ext.as_str()) {
-        if let Ok(img) = Image::load_from_path(path) {
-            ui.set_preview_image(img);
+/// Điền kết quả đọc nền vào panel.
+pub fn apply_data(ui: &AppWindow, entry: &Entry, data: files_fs::PreviewData) {
+    match data {
+        files_fs::PreviewData::FolderCount(count) => {
+            let mut rows = properties(entry);
+            for row in rows.iter_mut() {
+                if row.label == "Số mục" {
+                    row.value = SharedString::from(folder_count_label(count).as_str());
+                }
+            }
+            ui.set_props(ModelRc::new(VecModel::from(rows)));
+            set(ui, "info", &entry.name);
+        }
+        files_fs::PreviewData::Image(icon) => {
+            ui.set_preview_image(crate::view::to_slint_image(&icon));
             set(ui, "image", &entry.name);
         }
-        return;
-    }
-
-    if TEXT_EXTS.contains(&ext.as_str()) && entry.size.unwrap_or(0) <= 4 * TEXT_LIMIT {
-        let mut buf = Vec::new();
-        let read = File::open(path).and_then(|f| f.take(TEXT_LIMIT).read_to_end(&mut buf));
-        if read.is_ok() {
-            ui.set_preview_text(SharedString::from(String::from_utf8_lossy(&buf).as_ref()));
+        files_fs::PreviewData::Text(text) => {
+            ui.set_preview_text(SharedString::from(text.as_str()));
             set(ui, "text", &entry.name);
         }
+        files_fs::PreviewData::None => {}
     }
 }
 

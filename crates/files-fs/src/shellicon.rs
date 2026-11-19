@@ -59,6 +59,7 @@ pub fn wants_shell_icon(path: &Path) -> bool {
 }
 
 /// A decoded RGBA bitmap ready for Slint.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RgbaIcon {
     pub width: u32,
     pub height: u32,

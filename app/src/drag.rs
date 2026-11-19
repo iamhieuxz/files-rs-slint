@@ -10,7 +10,7 @@ use crate::slint_generated::*;
 use crate::state::{App, Pane};
 use slint::SharedString;
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 enum DropTarget {
@@ -26,9 +26,9 @@ fn resolve(app: &App, x: f32, y: f32) -> DropTarget {
         .iter()
         .find(|(path, rect)| !path.is_empty() && rect.contains(x, y))
     {
-        if Path::new(path).is_dir() {
-            return DropTarget::Sidebar(path.clone());
-        }
+        // Không `is_dir()` giữa lúc kéo: mỗi lần di chuột sẽ là một lời gọi đĩa.
+        // Đích được kiểm tra một lần khi thả.
+        return DropTarget::Sidebar(path.clone());
     }
     for pane in [Pane::Left, Pane::Right] {
         if let Some(rect) = app.drag.pane_bounds[pane.index()] {
@@ -157,9 +157,8 @@ pub fn dropped(ui: &AppWindow, app: &Rc<RefCell<App>>, x: f32, y: f32, copy: boo
         "internal drop at {x},{y} copy={copy} -> {target_label}"
     ));
     let Some(dest) = dest else { return };
-    if !dest.is_dir() {
-        return;
-    }
+    // Không `is_dir()` ở đây: đích được kiểm tra trong `drop_paths`, nơi có
+    // thông báo lỗi và chạy ngoài đường đi của chuột.
     if let Some(source) = source {
         let same = {
             let a = app.borrow();

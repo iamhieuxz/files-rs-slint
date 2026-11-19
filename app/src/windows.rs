@@ -1,4 +1,4 @@
-﻿//! Multiple windows.
+//! Multiple windows.
 //!
 //! Slint creates each window from the same component, so "another window" means
 //! another `AppWindow` plus another [`App`] holding its own tabs. The two must
@@ -25,6 +25,12 @@ struct LiveWindow {
     app: Rc<RefCell<App>>,
     /// Set when the window asked to close, so the list can drop it.
     closed: Rc<std::cell::Cell<bool>>,
+    /// Event pumps owned by this window.
+    ///
+    /// Slint timers stop when dropped. Keeping them here — instead of
+    /// `mem::forget` — is what lets a closed window release its `App`, its
+    /// worker thread and its directory watcher.
+    timers: Vec<Rc<slint::Timer>>,
 }
 
 thread_local! {
@@ -89,15 +95,18 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
     tabs::sync_tabs(&ui, &app.borrow());
 
     wiring::wire_callbacks(&ui, &app);
-    events::install_progress_pump(&ui, &app);
-    events::install_status_clear(&ui);
-    events::install_result_pump(&ui, &app);
-    events::install_watch_pump(&ui, &app);
+    let mut timers = vec![
+        events::install_progress_pump(&ui, &app),
+        events::install_status_clear(&ui),
+        events::install_result_pump(&ui, &app),
+        events::install_watch_pump(&ui, &app),
+        window::install_state_poller(&ui),
+    ];
     window::wire(&ui, Rc::as_ptr(&app));
-    window::install_state_poller(&ui);
 
     ui.show()?;
-    crate::native_drop::install(&ui, &app);
+    // Đăng ký nhận tệp kéo từ Explorer; timer của nó cũng thuộc cửa sổ.
+    timers.push(crate::native_drop::install(&ui, &app));
 
     // Giữ cửa sổ sống trong danh sách; đóng cửa sổ thì dọn khỏi danh sách.
     let closed = Rc::new(std::cell::Cell::new(false));
@@ -108,7 +117,12 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
     });
 
     LIVE.with(|live| {
-        live.borrow_mut().push(LiveWindow { ui, app, closed });
+        live.borrow_mut().push(LiveWindow {
+            ui,
+            app,
+            closed,
+            timers,
+        });
     });
     sweep();
     logging::write(&format!(
@@ -145,6 +159,11 @@ pub fn sweep() {
         // ngay, và một cửa sổ đã đóng mà còn hiện là lỗi thấy được.
         for w in list.iter().filter(|w| w.closed.get()) {
             crate::native_drop::revoke(&w.ui);
+            // Dừng pump trước khi ẩn: closure của timer giữ `App`, nên chỉ cần
+            // thả timer là worker thread và watcher của cửa sổ được giải phóng.
+            for timer in &w.timers {
+                timer.stop();
+            }
             let _ = w.ui.hide();
         }
         list.retain(|w| !w.closed.get());

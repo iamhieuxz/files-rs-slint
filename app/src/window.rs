@@ -165,7 +165,7 @@ pub fn wire(_ui: &crate::AppWindow, _app_id: *const std::cell::RefCell<crate::st
 /// Polled on a short timer instead of hooking `WM_SIZE`: Slint owns the message
 /// loop, and a poll of one Win32 call is cheaper than fighting for the wndproc.
 #[cfg(windows)]
-pub fn install_state_poller(ui: &crate::AppWindow) {
+pub fn install_state_poller(ui: &crate::AppWindow) -> std::rc::Rc<slint::Timer> {
     use slint::winit_030::WinitWindowAccessor;
     use slint::{Timer, TimerMode};
     use std::time::Duration;
@@ -182,9 +182,11 @@ pub fn install_state_poller(ui: &crate::AppWindow) {
             ui.set_is_maximized(maximized);
         }
     });
-    // Giữ timer sống theo cửa sổ.
-    std::mem::forget(timer);
+    // Người gọi giữ timer theo cửa sổ; thả ra là dừng poll.
+    std::rc::Rc::new(timer)
 }
 
 #[cfg(not(windows))]
-pub fn install_state_poller(_ui: &crate::AppWindow) {}
+pub fn install_state_poller(_ui: &crate::AppWindow) -> std::rc::Rc<slint::Timer> {
+    std::rc::Rc::new(slint::Timer::default())
+}

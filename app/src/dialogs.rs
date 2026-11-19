@@ -184,9 +184,14 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
 }
 
 pub fn show_properties(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let s = app.borrow();
-    let Some(entry) = s.tab().selected_entries().first().cloned() else {
+    // Sao chép entry ra ngoài borrow: `queue_preview` cần borrow lại `App`.
+    let entry = {
+        let s = app.borrow();
+        s.tab().selected_entries().first().map(|e| (*e).clone())
+    };
+    let Some(entry) = entry else {
         return;
     };
-    preview::show(ui, entry);
+    preview::show(ui, &entry);
+    crate::panes::queue_preview(app, &entry);
 }

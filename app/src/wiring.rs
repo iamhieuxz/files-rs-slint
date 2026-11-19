@@ -405,14 +405,9 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             let Some(ui) = w.upgrade() else { return };
             let p = files_core::path::normalize(text.as_str());
             ui.set_editing_address(false);
-            if p.is_dir() {
-                navigate_to(&ui, &a, p);
-            } else {
-                ui.set_error_text(SharedString::from(
-                    format!("Không tìm thấy thư mục: {}", p.display()).as_str(),
-                ));
-                ui.set_busy(false);
-            }
+            // Không `is_dir()` ở đây: `Job::Load` kiểm tra và báo lỗi trên
+            // luồng nền, nên đường dẫn sai vẫn hiện thông báo mà không treo UI.
+            navigate_to(&ui, &a, p);
         });
     }
     {

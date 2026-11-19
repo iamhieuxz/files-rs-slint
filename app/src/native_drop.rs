@@ -212,7 +212,7 @@ mod imp {
         }
     }
 
-    pub fn install(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    pub fn install(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Rc<slint::Timer> {
         // HWND chỉ có sau khi winit xử lý ít nhất một vòng sự kiện; thử lại
         // bằng timer thay vì bỏ mất đăng ký.
         let w = ui.as_weak();
@@ -233,7 +233,8 @@ mod imp {
                 }
             },
         );
-        std::mem::forget(timer);
+        // Trả về timer (không `mem::forget`): cửa sổ sở hữu nó và dừng khi đóng.
+        timer
     }
 
     pub fn revoke(ui: &AppWindow) {
@@ -257,7 +258,9 @@ mod imp {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    pub fn install(_ui: &AppWindow, _app: &Rc<RefCell<App>>) {}
+    pub fn install(_ui: &AppWindow, _app: &Rc<RefCell<App>>) -> Rc<slint::Timer> {
+        Rc::new(slint::Timer::default())
+    }
     pub fn revoke(_ui: &AppWindow) {}
 }
 

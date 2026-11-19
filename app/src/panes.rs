@@ -108,7 +108,26 @@ pub fn show_preview(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     };
     if let Some(entry) = entry {
         preview::show(ui, &entry);
+        queue_preview(app, &entry);
     } else {
         preview::clear(ui);
     }
+}
+
+/// Hỏi luồng nền phần dữ liệu nặng của panel xem trước.
+///
+/// Ảnh, văn bản và số mục con đều cần chạm đĩa; làm trên UI thread sẽ làm đứng
+/// cửa sổ khi gặp thư mục mạng hoặc ảnh lớn.
+pub fn queue_preview(app: &Rc<RefCell<App>>, entry: &files_core::Entry) {
+    let kind = preview::kind_for(entry);
+    if kind == files_fs::PreviewKind::None {
+        return;
+    }
+    let token = {
+        let s = app.borrow();
+        s.pane_load(s.active_pane).token
+    };
+    app.borrow()
+        .worker
+        .submit_preview(std::path::PathBuf::from(&entry.path), kind, token);
 }

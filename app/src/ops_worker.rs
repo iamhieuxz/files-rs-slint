@@ -154,6 +154,12 @@ pub enum JobDone {
         icon: files_fs::RgbaIcon,
         token: u64,
     },
+    /// Dữ liệu nặng của panel xem trước, đọc trên luồng nền.
+    Preview {
+        path: PathBuf,
+        data: files_fs::PreviewData,
+        token: u64,
+    },
     /// Kết quả hoàn tác/làm lại; UI dời action giữa hai ngăn xếp khi thành công.
     UndoDone {
         action: crate::undo::UndoAction,
@@ -193,6 +199,13 @@ pub enum AuxJob {
         size: u32,
         token: u64,
     },
+    /// Đọc dữ liệu nặng cho panel xem trước: số mục của thư mục, ảnh, hoặc
+    /// đoạn văn bản đầu tệp. `token` chống kết quả cũ ghi đè lựa chọn mới.
+    Preview {
+        path: PathBuf,
+        kind: files_fs::PreviewKind,
+        token: u64,
+    },
 }
 
 /// Run one decoration job. `None` means "nothing worth telling the UI".
@@ -215,6 +228,11 @@ fn run_aux(job: AuxJob) -> Option<JobDone> {
             .ok()
             .flatten()
             .map(|image| JobDone::Thumbnail { path, image, token }),
+        AuxJob::Preview { path, kind, token } => Some(JobDone::Preview {
+            data: files_fs::preview_data(&path, kind),
+            path,
+            token,
+        }),
     }
 }
 
@@ -294,6 +312,13 @@ impl Worker {
     /// so a folder of photos cannot delay a rename or a paste.
     pub fn submit_thumbnail(&self, path: PathBuf, size: u32, token: u64) {
         let _ = self.aux_tx.send(AuxJob::Thumbnail { path, size, token });
+    }
+
+    /// Queue the heavy part of the preview panel (image decode, text read,
+    /// folder entry count) so selecting a row never touches the disk on the UI
+    /// thread.
+    pub fn submit_preview(&self, path: PathBuf, kind: files_fs::PreviewKind, token: u64) {
+        let _ = self.aux_tx.send(AuxJob::Preview { path, kind, token });
     }
 }
 

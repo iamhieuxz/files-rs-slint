@@ -64,7 +64,10 @@ pub fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, 
             .cloned()
     };
     match entry {
-        Some(e) => preview::show(ui, &e),
+        Some(e) => {
+            preview::show(ui, &e);
+            crate::panes::queue_preview(app, &e);
+        }
         None => preview::clear(ui),
     }
 }

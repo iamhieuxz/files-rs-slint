@@ -40,13 +40,9 @@ pub fn sync_tabs(ui: &AppWindow, app: &App) {
 pub fn reopen_closed_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let path = app.borrow_mut().closed_tabs.pop();
     let Some(path) = path else { return };
-    // The folder may have been deleted while the tab was closed.
-    if !path.is_dir() {
-        ui.set_error_text(SharedString::from(
-            format!("Thư mục đã đóng không còn tồn tại: {}", path.display()).as_str(),
-        ));
-        return;
-    }
+    // Không kiểm tra `is_dir()` trên UI thread: thư mục có thể đã bị xoá, và
+    // `Job::Load` sẽ báo lỗi đó. Gọi đĩa đồng bộ ở đây làm treo cửa sổ với ổ
+    // mạng đang ngủ.
     {
         let mut s = app.borrow_mut();
         s.tabs.push(Tab::new(path));
