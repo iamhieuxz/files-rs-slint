@@ -163,6 +163,9 @@ pub const IMPLEMENTED_COMMANDS: &[&str] = &[
     "group-size",
     "group-kind",
     "group-tag",
+    "group-deleted",
+    "group-original",
+    "restore-all-from-recycle-bin",
     "group-unit",
     "tab-close",
     "tab-close-all",
@@ -303,6 +306,12 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "group-size" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::Size),
         "group-kind" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::Kind),
         "group-tag" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::Tag),
+        "group-deleted" => {
+            crate::view::set_group_by(ui, app, files_core::group::GroupBy::DeletedDate)
+        }
+        "group-original" => {
+            crate::view::set_group_by(ui, app, files_core::group::GroupBy::OriginalFolder)
+        }
         "group-unit" => crate::view::cycle_group_unit(ui, app),
         "select-invert" => {
             crate::selection::invert(ui, app);
@@ -380,6 +389,7 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "delete-permanent" => ask_delete_permanent(ui, app),
         "open-recycle-bin" => open_recycle_bin(ui, app),
         "restore-from-recycle-bin" => restore_selected_from_bin(ui, app),
+        "restore-all-from-recycle-bin" => ask_restore_all_from_bin(ui, app),
         "copy-path" => copy_selected_path(ui, app),
         "copy-path-quoted" => copy_selected_path_quoted(ui, app),
         "open-containing-folder" => open_containing_folder(ui, app),
@@ -1021,6 +1031,24 @@ pub const PALETTE: &[PaletteCommand] = &[
         icon: "tag",
         shortcut: "",
     },
+    PaletteCommand {
+        id: "group-deleted",
+        label: "Nhóm theo ngày xoá",
+        icon: "clock",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "group-original",
+        label: "Nhóm theo thư mục gốc",
+        icon: "folder",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "restore-all-from-recycle-bin",
+        label: "Khôi phục tất cả",
+        icon: "arrow_sync",
+        shortcut: "",
+    },
 ];
 
 /// Ghim thư mục đang mở vào sidebar, hoặc bỏ ghim nếu đã có.
@@ -1057,6 +1085,86 @@ pub fn toggle_pin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     } else {
         "Đã bỏ ghim"
     }));
+}
+
+/// Khôi phục **toàn bộ** mục trong Thùng rác.
+///
+/// Hỏi xác nhận trước vì đây là thao tác hàng loạt không hoàn tác được bằng một
+/// cú bấm. Đích đã có tệp cùng tên thì bỏ qua mục đó và báo lại, không ghi đè.
+pub fn ask_restore_all_from_bin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let count = {
+        let s = app.borrow();
+        let tab = s.tab();
+        if !tab.recycle {
+            ui.set_error_text(SharedString::from(
+                "Chỉ khôi phục được khi đang mở Thùng rác",
+            ));
+            return;
+        }
+        tab.recycle_items.len()
+    };
+    if count == 0 {
+        ui.set_status_message(SharedString::from("Thùng rác đang trống"));
+        return;
+    }
+    ui.set_dialog_kind(SharedString::from("confirm-restore-all-bin"));
+    ui.set_dialog_title(SharedString::from("Khôi phục tất cả"));
+    ui.set_dialog_text(SharedString::from(
+        format!(
+            "Khôi phục {count} mục về đúng chỗ cũ. Mục nào đã có tệp cùng tên ở đích sẽ được bỏ qua."
+        )
+        .as_str(),
+    ));
+    ui.set_dialog_primary_label(SharedString::from("Khôi phục tất cả"));
+    ui.set_dialog_has_input(false);
+    ui.set_dialog_allows_empty(false);
+    ui.set_dialog_open(true);
+}
+
+/// Khôi phục mọi mục trong Thùng rác. Chạy sau khi người dùng xác nhận.
+pub fn restore_all_from_bin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let items = {
+        let s = app.borrow();
+        let tab = s.tab();
+        if !tab.recycle {
+            return;
+        }
+        tab.recycle_items.clone()
+    };
+
+    let mut done = 0usize;
+    let mut skipped = 0usize;
+    let mut first_error: Option<String> = None;
+    for item in &items {
+        match files_fs::restore_recycle_item(item) {
+            Ok(()) => done += 1,
+            Err(e) => {
+                // Đích đã có tệp cùng tên là trường hợp thường gặp, không phải
+                // lỗi hệ thống: đếm riêng để thông báo dễ hiểu.
+                if e.code == "recycle_conflict" {
+                    skipped += 1;
+                } else if first_error.is_none() {
+                    first_error = Some(format!("{}: {}", item.name, e.message));
+                }
+            }
+        }
+    }
+
+    crate::navigation::reload(ui, app);
+
+    let mut message = format!("Đã khôi phục {done} mục");
+    if skipped > 0 {
+        message.push_str(&format!(
+            ", bỏ qua {skipped} mục vì đích đã có tệp cùng tên"
+        ));
+    }
+    if let Some(err) = first_error {
+        ui.set_error_text(SharedString::from(
+            format!("{message}. Lỗi — {err}").as_str(),
+        ));
+    } else {
+        ui.set_status_message(SharedString::from(message.as_str()));
+    }
 }
 
 /// Mở Thùng rác trong một tab mới.

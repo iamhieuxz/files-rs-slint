@@ -269,6 +269,19 @@ pub fn grouped_rows(
         .visible
         .iter()
         .filter_map(|i| tab.entries.get(*i).cloned())
+        .map(|mut e| {
+            // Nhóm theo thư mục gốc cần đường dẫn **trước khi xoá**, mà `Entry`
+            // chỉ giữ đường dẫn `$R` trong thùng. Thay `path` bằng thư mục cha
+            // của đường dẫn gốc, lấy từ `recycle_items` theo cùng chỉ số.
+            if tab.recycle && tab.group_by == GroupBy::OriginalFolder {
+                if let Some(item) = tab.recycle_items.iter().find(|r| r.r_path == e.path) {
+                    if let Some(parent) = item.original.parent() {
+                        e.path = parent.to_string_lossy().into_owned();
+                    }
+                }
+            }
+            e
+        })
         .collect();
     let groups = group(&entries, tab.group_by, tab.group_unit, tag_of);
     let mut order = Vec::with_capacity(entries.len());

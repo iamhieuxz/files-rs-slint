@@ -30,6 +30,11 @@ pub enum GroupBy {
     Kind,
     /// Theo thẻ màu đầu tiên đang gắn.
     Tag,
+    /// Theo thư mục gốc của tệp. Chỉ có nghĩa trong Thùng rác, nơi mỗi mục nhớ
+    /// đường dẫn trước khi bị xoá.
+    OriginalFolder,
+    /// Theo ngày xoá. Chỉ có nghĩa trong Thùng rác.
+    DeletedDate,
 }
 
 impl GroupBy {
@@ -42,6 +47,8 @@ impl GroupBy {
             Self::Size => "Kích thước",
             Self::Kind => "Loại",
             Self::Tag => "Thẻ màu",
+            Self::OriginalFolder => "Thư mục gốc",
+            Self::DeletedDate => "Ngày xoá",
         }
     }
 
@@ -56,6 +63,14 @@ impl GroupBy {
             Self::Kind,
             Self::Tag,
         ]
+    }
+
+    /// Tiêu chí chỉ có nghĩa trong Thùng rác.
+    ///
+    /// Menu thường không nên hiện hai mục này vì ngoài Thùng rác không có dữ
+    /// liệu để nhóm theo.
+    pub fn recycle_only(self) -> bool {
+        matches!(self, Self::OriginalFolder | Self::DeletedDate)
     }
 }
 
@@ -144,6 +159,17 @@ fn key_for(
         GroupBy::Size => size_label(entry),
         GroupBy::Kind => kind_label(entry),
         GroupBy::Tag => tag_of(entry).unwrap_or_else(|| "Chưa gắn thẻ".to_string()),
+        // Hai tiêu chí dưới chỉ dùng trong Thùng rác. Nơi gọi (`view::grouped_rows`)
+        // dựng sẵn bản sao `Entry` có `path` là thư mục gốc và `modified_ms` là
+        // thời điểm xoá, nên ở đây chỉ cần đọc đúng trường đó.
+        GroupBy::OriginalFolder => {
+            if entry.path.is_empty() {
+                "Không rõ".to_string()
+            } else {
+                entry.path.clone()
+            }
+        }
+        GroupBy::DeletedDate => date_label(entry.modified_ms, unit),
     }
 }
 
@@ -358,6 +384,62 @@ mod tests {
             |_| None,
         );
         assert!(month[0].label.ends_with("/2026"));
+    }
+
+    #[test]
+    fn recycle_only_criteria_are_flagged() {
+        // Menu thường không được hiện hai tiêu chí này: ngoài Thùng rác không có
+        // dữ liệu để nhóm theo, chọn vào sẽ ra một nhóm duy nhất vô nghĩa.
+        assert!(GroupBy::OriginalFolder.recycle_only());
+        assert!(GroupBy::DeletedDate.recycle_only());
+        assert!(!GroupBy::Name.recycle_only());
+        assert!(!GroupBy::Tag.recycle_only());
+        assert!(!GroupBy::None.recycle_only());
+    }
+
+    #[test]
+    fn deleted_date_groups_by_the_modified_field() {
+        // Trong tab Thùng rác, `modified_ms` giữ thời điểm xoá.
+        let items = [
+            entry("a.txt", None, Some(1_769_000_000_000)),
+            entry("b.txt", None, Some(1_769_000_000_000)),
+            entry("c.txt", None, None),
+        ];
+        let groups = group(&items, GroupBy::DeletedDate, DateUnit::Year, |_| None);
+        let labels: Vec<&str> = groups.iter().map(|g| g.label.as_str()).collect();
+        assert_eq!(labels, vec!["2026", "Không rõ"]);
+        assert_eq!(groups[0].indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn original_folder_groups_by_the_path_field() {
+        // Nơi gọi thay `Entry.path` bằng thư mục cha của đường dẫn gốc trước khi
+        // gọi `group`, nên ở đây chỉ cần `path` được dùng làm khoá.
+        let mut a = entry("a.txt", None, None);
+        a.path = r"C:\Users\me\Desktop".into();
+        let mut b = entry("b.txt", None, None);
+        b.path = r"C:\Users\me\Desktop".into();
+        let mut c = entry("c.txt", None, None);
+        c.path = r"C:\Users\me\Documents".into();
+
+        let groups = group(&[a, b, c], GroupBy::OriginalFolder, DateUnit::Month, |_| {
+            None
+        });
+        let labels: Vec<&str> = groups.iter().map(|g| g.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![r"C:\Users\me\Desktop", r"C:\Users\me\Documents"]
+        );
+        assert_eq!(groups[0].indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn an_empty_original_path_gets_a_placeholder_label() {
+        // `$I` hỏng có thể để lại đường dẫn rỗng; không được hiện header trống.
+        let mut e = entry("a.txt", None, None);
+        e.path = String::new();
+        let groups = group(&[e], GroupBy::OriginalFolder, DateUnit::Month, |_| None);
+        assert_eq!(groups[0].label, "Không rõ");
     }
 
     #[test]

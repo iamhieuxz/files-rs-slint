@@ -205,6 +205,9 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
                 ui.set_error_text(SharedString::from(text.as_str()));
             }
         },
+        "confirm-restore-all-bin" => {
+            crate::commands::restore_all_from_bin(ui, app);
+        }
         "confirm-rotate" | "confirm-rotate-left" => {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {

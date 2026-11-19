@@ -168,6 +168,15 @@ fn show_row_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, i: i32, x: f32, y: f32) {
             in_recycle,
             false,
         ),
+        // Khôi phục tất cả: thao tác hàng loạt, chỉ có nghĩa khi có mục.
+        menu(
+            "restore-all-from-recycle-bin",
+            "Khôi phục tất cả",
+            "arrow_sync",
+            "",
+            in_recycle && !a.borrow().tab().recycle_items.is_empty(),
+            false,
+        ),
         menu("", "", "", "", false, true),
         // Thẻ màu: đổi màu icon của tệp hoặc thư mục.
         menu_header("Thẻ màu"),
@@ -324,6 +333,16 @@ fn show_background_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, x: f32, y: f32) {
         menu("group-size", "Kích thước", "resize", "", true, false),
         menu("group-kind", "Loại", "document", "", true, false),
         menu("group-tag", "Thẻ màu", "tag", "", true, false),
+        // Hai tiêu chí chỉ có dữ liệu trong Thùng rác.
+        menu("group-deleted", "Ngày xoá", "clock", "", in_recycle, false),
+        menu(
+            "group-original",
+            "Thư mục gốc",
+            "folder",
+            "",
+            in_recycle,
+            false,
+        ),
         menu(
             "toggle-hidden",
             if a.borrow().show_hidden {
