@@ -53,6 +53,8 @@ export component SettingsWindow inherits Window {
     in-out property <bool> show-hidden: false;
     in-out property <bool> show-extensions: true;
     in-out property <bool> folders-first: true;
+    // Nhãn của cách tách nhóm thư mục/tệp, do Rust điền.
+    in-out property <string> folder-order: "Thư mục trước";
 
     callback close-requested();
     callback page-changed(string);

@@ -11,6 +11,9 @@ pub mod error;
 pub mod path;
 pub mod sort;
 
+pub mod autofit;
+pub mod group;
+
 pub use entry::{Entry, EntryKind};
 pub use error::FsError;
 pub use path::{breadcrumbs, Crumb};

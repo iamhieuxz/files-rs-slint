@@ -97,7 +97,7 @@ pub struct Settings {
     pub show_preview: bool,
     pub show_hidden: bool,
     pub show_extensions: bool,
-    pub folders_first: bool,
+    pub folder_order: files_core::sort::FolderOrder,
     /// Thư mục người dùng ghim vào sidebar, theo thứ tự thêm.
     pub pinned_folders: Vec<String>,
     /// Thứ tự cột details view, kéo được như Excel.
@@ -116,7 +116,7 @@ impl Default for Settings {
             show_preview: true,
             show_hidden: false,
             show_extensions: true,
-            folders_first: true,
+            folder_order: files_core::sort::FolderOrder::FoldersFirst,
             pinned_folders: Vec::new(),
             column_order: default_column_order(),
             column_widths: COLUMN_IDS
@@ -151,7 +151,7 @@ impl Settings {
         self.show_preview = current.show_preview;
         self.show_hidden = current.show_hidden;
         self.show_extensions = current.show_extensions;
-        self.folders_first = current.folders_first;
+        self.folder_order = current.folder_order;
         self.column_order = current.column_order.clone();
         self.column_widths = current.column_widths.clone();
         self
@@ -302,7 +302,7 @@ mod tests {
             show_preview: false,
             show_hidden: true,
             show_extensions: false,
-            folders_first: false,
+            folder_order: files_core::sort::FolderOrder::Together,
             pinned_folders: vec![r"C:\Users\x\Documents".into()],
             column_order: default_column_order(),
             column_widths: Settings::default().column_widths,

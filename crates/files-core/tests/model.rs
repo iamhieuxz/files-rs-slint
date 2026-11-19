@@ -68,7 +68,7 @@ fn folders_first_can_be_disabled() {
         entry("zzz", EntryKind::Directory, None),
     ];
     let spec = SortSpec {
-        folders_first: false,
+        folder_order: files_core::sort::FolderOrder::Together,
         ..Default::default()
     };
     spec.sort(&mut rows);
@@ -85,7 +85,7 @@ fn size_sort_puts_directories_last_and_orders_ascending() {
     // folders_first off so the size column is the only ordering.
     let spec = SortSpec {
         by: SortBy::Size,
-        folders_first: false,
+        folder_order: files_core::sort::FolderOrder::Together,
         ..Default::default()
     };
     spec.sort(&mut rows);
@@ -102,7 +102,7 @@ fn descending_reverses_the_primary_key() {
     ];
     let spec = SortSpec {
         direction: SortDirection::Descending,
-        folders_first: false,
+        folder_order: files_core::sort::FolderOrder::Together,
         ..Default::default()
     };
     spec.sort(&mut rows);
@@ -121,7 +121,7 @@ fn sort_is_deterministic_for_equal_keys() {
     };
     let spec = SortSpec {
         by: SortBy::Size,
-        folders_first: false,
+        folder_order: files_core::sort::FolderOrder::Together,
         ..Default::default()
     };
     let mut first = make();

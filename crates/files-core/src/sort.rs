@@ -35,14 +35,58 @@ impl SortDirection {
     }
 }
 
+/// Cách đối xử giữa thư mục và tệp khi sắp xếp.
+///
+/// Files gốc có ba action riêng: `SortFoldersFirstAction`,
+/// `SortFilesFirstAction`, `SortFilesAndFoldersTogetherAction`. Trước đây bản
+/// Rust chỉ có một cờ `folders_first`, nên hai hành vi còn lại không chọn được.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FolderOrder {
+    /// Thư mục trước tệp, bất kể cột đang sắp xếp. Mặc định của Explorer.
+    #[default]
+    FoldersFirst,
+    /// Tệp trước thư mục.
+    FilesFirst,
+    /// Không tách nhóm: sắp xếp thuần theo cột đang chọn.
+    Together,
+}
+
+impl FolderOrder {
+    /// Thứ hạng dùng làm khoá phụ; `None` nghĩa là không tách nhóm.
+    fn rank(self, is_dir: bool) -> Option<u8> {
+        match self {
+            Self::FoldersFirst => Some(if is_dir { 0 } else { 1 }),
+            Self::FilesFirst => Some(if is_dir { 1 } else { 0 }),
+            Self::Together => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FoldersFirst => "Thư mục trước",
+            Self::FilesFirst => "Tệp trước",
+            Self::Together => "Sắp chung",
+        }
+    }
+
+    /// Chu kỳ ba trạng thái, dùng cho nút bấm lặp.
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::FoldersFirst => Self::FilesFirst,
+            Self::FilesFirst => Self::Together,
+            Self::Together => Self::FoldersFirst,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SortSpec {
     pub by: SortBy,
     pub direction: SortDirection,
-    /// Windows Explorer default: folders are grouped before files regardless of
-    /// the active column. Files app exposes this as "Sort folders before files".
-    pub folders_first: bool,
+    /// Cách tách nhóm thư mục và tệp.
+    pub folder_order: FolderOrder,
 }
 
 impl Default for SortSpec {
@@ -50,7 +94,7 @@ impl Default for SortSpec {
         Self {
             by: SortBy::Name,
             direction: SortDirection::Ascending,
-            folders_first: true,
+            folder_order: FolderOrder::FoldersFirst,
         }
     }
 }
@@ -134,10 +178,15 @@ fn cmp_option<T: Ord>(a: Option<T>, b: Option<T>) -> Ordering {
 
 impl SortSpec {
     pub fn compare(&self, a: &Entry, b: &Entry) -> Ordering {
-        if self.folders_first {
-            let folder_ord = b.is_dir().cmp(&a.is_dir());
-            if folder_ord != Ordering::Equal {
-                return folder_ord;
+        // Nhóm thư mục/tệp là khoá **phụ**: nó quyết định trước cột đang sắp
+        // xếp, nhưng đảo chiều cùng lúc với cột để hành vi khớp Explorer.
+        if let (Some(ra), Some(rb)) = (
+            self.folder_order.rank(a.is_dir()),
+            self.folder_order.rank(b.is_dir()),
+        ) {
+            let group = ra.cmp(&rb);
+            if group != Ordering::Equal {
+                return self.direction.flip(group);
             }
         }
 

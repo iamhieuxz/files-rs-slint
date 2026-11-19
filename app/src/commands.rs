@@ -148,6 +148,16 @@ pub const IMPLEMENTED_COMMANDS: &[&str] = &[
     "rotate-cw",
     "search-recursive",
     "select-all",
+    "select-invert",
+    "autofit-columns",
+    "group-none",
+    "group-name",
+    "group-modified",
+    "group-created",
+    "group-size",
+    "group-kind",
+    "group-tag",
+    "group-unit",
     "tab-close",
     "tab-close-all",
     "tab-close-left",
@@ -271,6 +281,25 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "new-folder" => ask_new(ui, "new-folder"),
         "new-file" => ask_new(ui, "new-file"),
         "new-menu" => show_new_menu(ui, 12.0, 40.0),
+        "autofit-columns" => {
+            crate::view::autofit_columns(ui, app);
+        }
+        // Nhóm: mỗi tiêu chí một id cố định để menu và palette cùng gọi được.
+        "group-none" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::None),
+        "group-name" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::Name),
+        "group-modified" => {
+            crate::view::set_group_by(ui, app, files_core::group::GroupBy::DateModified)
+        }
+        "group-created" => {
+            crate::view::set_group_by(ui, app, files_core::group::GroupBy::DateCreated)
+        }
+        "group-size" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::Size),
+        "group-kind" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::Kind),
+        "group-tag" => crate::view::set_group_by(ui, app, files_core::group::GroupBy::Tag),
+        "group-unit" => crate::view::cycle_group_unit(ui, app),
+        "select-invert" => {
+            crate::selection::invert(ui, app);
+        }
         "select-all" => {
             {
                 let mut s = app.borrow_mut();
@@ -362,31 +391,28 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
             }));
         }
         "toggle-folders-first" => {
-            let v = !app.borrow().folders_first;
-            app.borrow_mut().folders_first = v;
+            // Ba trạng thái như Files gốc: thư mục trước → tệp trước → sắp chung.
+            let next = app.borrow().folder_order.cycle();
+            app.borrow_mut().folder_order = next;
             persist_ui(app);
             // Sắp xếp lại ngay, không cần đọc lại thư mục.
             {
                 let mut s = app.borrow_mut();
                 for tab in s.tabs.iter_mut() {
-                    tab.sort.folders_first = v;
+                    tab.sort.folder_order = next;
                     let spec = tab.sort;
                     spec.sort(&mut tab.entries);
                     tab.rebuild_visible();
                 }
                 if let Some(tab) = s.right.as_mut() {
-                    tab.sort.folders_first = v;
+                    tab.sort.folder_order = next;
                     let spec = tab.sort;
                     spec.sort(&mut tab.entries);
                     tab.rebuild_visible();
                 }
             }
             push_all(ui, app);
-            ui.set_status_message(SharedString::from(if v {
-                "Thư mục trước tệp"
-            } else {
-                "Sắp xếp chung"
-            }));
+            ui.set_status_message(SharedString::from(next.label()));
         }
         // ---- tab nâng cao ----
         "reopen-tab" => reopen_closed_tab(ui, app),
@@ -899,6 +925,60 @@ pub const PALETTE: &[PaletteCommand] = &[
         label: "Cài đặt",
         icon: "settings",
         shortcut: "Ctrl+,",
+    },
+    PaletteCommand {
+        id: "select-all",
+        label: "Chọn tất cả",
+        icon: "checkmark",
+        shortcut: "Ctrl+A",
+    },
+    PaletteCommand {
+        id: "select-invert",
+        label: "Đảo lựa chọn",
+        icon: "arrow_sync",
+        shortcut: "Ctrl+Shift+I",
+    },
+    PaletteCommand {
+        id: "autofit-columns",
+        label: "Vừa cột theo nội dung",
+        icon: "resize",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "group-none",
+        label: "Không nhóm",
+        icon: "apps_list",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "group-name",
+        label: "Nhóm theo tên",
+        icon: "text_bullet_list",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "group-modified",
+        label: "Nhóm theo ngày sửa",
+        icon: "clock",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "group-size",
+        label: "Nhóm theo kích thước",
+        icon: "resize",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "group-kind",
+        label: "Nhóm theo loại",
+        icon: "document",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "group-tag",
+        label: "Nhóm theo thẻ màu",
+        icon: "tag",
+        shortcut: "",
     },
 ];
 

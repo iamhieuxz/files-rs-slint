@@ -14,8 +14,14 @@ Mọi thay đổi đáng chú ý của dự án được ghi ở đây. Định 
   10.000 mục chọn tất cả: 8.24 ms → 0.20 ms.
 - Thêm `CHANGELOG.md`.
 
-### Sẽ làm
-- Auto-fit cột, nhóm theo tiêu chí, ba biến thể sắp xếp, chọn đảo (D2–D5).
+### Thêm
+- **Tự vừa cột theo nội dung** (`autofit-columns`).
+- **Nhóm danh sách** theo tên, ngày sửa, ngày tạo, kích thước, loại hoặc thẻ màu;
+  đơn vị gom ngày chọn được Năm/Tháng/Ngày.
+- **Ba cách tách nhóm thư mục/tệp**: thư mục trước, tệp trước, sắp chung. Nút
+  lặp qua ba trạng thái và được lưu lại.
+- **Đảo lựa chọn** (`Ctrl+Shift+I`), chỉ áp dụng cho mục đang hiển thị.
+- **Thumbnail trong lưới**: ảnh thật thay cho glyph, giải mã ở 96px để không nhoè.
 
 ## [2.1.0] — 2026-11-19
 

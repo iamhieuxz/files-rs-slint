@@ -75,7 +75,7 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
         watch_dirty: false,
         closed_tabs: Vec::new(),
         show_extensions: saved.show_extensions,
-        folders_first: saved.folders_first,
+        folder_order: saved.folder_order,
         tags: {
             let path = state::tag_store_path();
             crate::tags::TagStore::load(&path)

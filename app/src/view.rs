@@ -81,8 +81,16 @@ fn build_rows(a: &App, tab: &Tab, grid_width: f32) -> (Vec<FileRow>, Vec<ModelRc
     // việc dựng danh sách thành O(n²). Với 10.000 tệp và chọn tất cả, đó là
     // 100 triệu phép so sánh mỗi lần vẽ lại.
     let selected: std::collections::HashSet<usize> = tab.selection.iter().copied().collect();
-    let rows: Vec<FileRow> = tab
-        .visible
+    // Thứ tự hiển thị: phẳng, hoặc đã gom theo nhóm. `index` của mỗi hàng vẫn là
+    // chỉ số trong `visible` để chọn/mở không lệch.
+    let order = grouped_rows(tab, |e| {
+        a.tags
+            .tags_for(Path::new(&e.path))
+            .first()
+            .map(|t| t.name.clone())
+    })
+    .0;
+    let rows: Vec<FileRow> = order
         .iter()
         .enumerate()
         .filter_map(|(visible_index, entry_index)| {
@@ -138,6 +146,153 @@ fn build_rows(a: &App, tab: &Tab, grid_width: f32) -> (Vec<FileRow>, Vec<ModelRc
         .map(|line| ModelRc::new(VecModel::from(line)))
         .collect();
     (rows, grid_rows)
+}
+
+/// Đặt cách nhóm và vẽ lại.
+pub fn set_group_by(ui: &AppWindow, app: &Rc<RefCell<App>>, by: files_core::group::GroupBy) {
+    {
+        let mut s = app.borrow_mut();
+        let tab = s.tab_mut();
+        tab.group_by = by;
+    }
+    push_view(ui, app);
+    ui.set_status_message(SharedString::from(
+        format!("Nhóm theo {}", by.label()).as_str(),
+    ));
+}
+
+/// Chuyển đơn vị gom ngày (Năm → Tháng → Ngày), chỉ có tác dụng khi đang nhóm
+/// theo ngày.
+pub fn cycle_group_unit(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    use files_core::group::DateUnit;
+    {
+        let mut s = app.borrow_mut();
+        let tab = s.tab_mut();
+        tab.group_unit = match tab.group_unit {
+            DateUnit::Year => DateUnit::Month,
+            DateUnit::Month => DateUnit::Day,
+            DateUnit::Day => DateUnit::Year,
+        };
+    }
+    push_view(ui, app);
+}
+
+/// Dựng model có header nhóm cho danh sách chi tiết.
+///
+/// Trả `(rows, headers)`; `headers` rỗng nghĩa là danh sách phẳng. Tách hai model
+/// thay vì chèn một hàng giả vào `rows` để chỉ số hàng vẫn khớp `visible`, nhờ
+/// vậy chọn và mở mục không bị lệch.
+pub fn grouped_rows(
+    tab: &Tab,
+    tag_of: impl Fn(&files_core::Entry) -> Option<String>,
+) -> (Vec<usize>, Vec<(usize, String)>) {
+    use files_core::group::{group, GroupBy};
+    if tab.group_by == GroupBy::None {
+        return (tab.visible.clone(), Vec::new());
+    }
+    // Nhóm trên các mục đang hiển thị, giữ nguyên thứ tự đã sắp xếp.
+    let entries: Vec<files_core::Entry> = tab
+        .visible
+        .iter()
+        .filter_map(|i| tab.entries.get(*i).cloned())
+        .collect();
+    let groups = group(&entries, tab.group_by, tab.group_unit, tag_of);
+    let mut order = Vec::with_capacity(entries.len());
+    let mut headers = Vec::new();
+    for g in groups {
+        headers.push((order.len(), g.label));
+        // `indices` là vị trí trong `entries` đã lọc, quy đổi về chỉ số `visible`.
+        for local in g.indices {
+            if let Some(original) = tab.visible.get(local) {
+                order.push(*original);
+            }
+        }
+    }
+    (order, headers)
+}
+
+/// Tự vừa bề rộng cột theo nội dung đang hiển thị.///
+/// Bề rộng được tính từ dữ liệu đã có trong `Tab::entries`, không đọc đĩa. Kết
+/// quả ghi vào `settings.column_widths` và đẩy ngay vào UI, nên lần mở sau vẫn
+/// giữ đúng.
+pub fn autofit_columns(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    use crate::settings::{column_bounds, column_default_width};
+    use files_core::autofit::fit_width;
+
+    let (widths, order) = {
+        let s = app.borrow();
+        let tab = s.tab();
+        // Lấy tên hiển thị đúng như danh sách đang vẽ, để cột không bị hụt khi
+        // phần mở rộng bị ẩn.
+        let names: Vec<usize> = tab
+            .visible
+            .iter()
+            .filter_map(|i| tab.entries.get(*i))
+            .map(|e| {
+                crate::format::display_name(&e.name, e.is_dir(), s.show_extensions)
+                    .chars()
+                    .count()
+            })
+            .collect();
+        let kinds: Vec<usize> = tab
+            .visible
+            .iter()
+            .filter_map(|i| tab.entries.get(*i))
+            .map(|e| crate::format::kind_label(e).chars().count())
+            .collect();
+        let sizes: Vec<usize> = tab
+            .visible
+            .iter()
+            .filter_map(|i| tab.entries.get(*i))
+            .map(|e| crate::format::format_size(e.size).chars().count())
+            .collect();
+        let dates: Vec<usize> = tab
+            .visible
+            .iter()
+            .filter_map(|i| tab.entries.get(*i))
+            .map(|e| crate::format::format_time(e.modified_ms).chars().count())
+            .collect();
+
+        let mut widths = s.settings.column_widths.clone();
+        let (nmin, nmax) = column_bounds("name");
+        // Cột tên có icon ở đầu nên cộng thêm chỗ cho icon và khoảng cách.
+        widths.insert("name".into(), fit_width(names.into_iter(), nmin, nmax, 24));
+        let (kmin, kmax) = column_bounds("kind");
+        widths.insert("kind".into(), fit_width(kinds.into_iter(), kmin, kmax, 0));
+        let (smin, smax) = column_bounds("size");
+        widths.insert("size".into(), fit_width(sizes.into_iter(), smin, smax, 0));
+        let (mmin, mmax) = column_bounds("modified");
+        widths.insert(
+            "modified".into(),
+            fit_width(dates.into_iter(), mmin, mmax, 0),
+        );
+        (widths, s.settings.column_order.clone())
+    };
+
+    {
+        let mut s = app.borrow_mut();
+        s.settings.column_widths = widths.clone();
+    }
+    crate::state::persist_ui(app);
+    // Đẩy vào UI bằng cùng đường mà thao tác kéo cột đang dùng.
+    apply_column_widths(ui, &widths, &order);
+    ui.set_status_message(SharedString::from("Đã vừa cột theo nội dung"));
+    let _ = column_default_width;
+}
+
+/// Ghi bề rộng cột vào các property tương ứng của `AppWindow`.
+pub fn apply_column_widths(
+    ui: &AppWindow,
+    widths: &std::collections::BTreeMap<String, u32>,
+    order: &[String],
+) {
+    let get = |id: &str| widths.get(id).copied().unwrap_or(120) as f32;
+    ui.set_col_name_width(get("name"));
+    ui.set_col_tag_width(get("tag"));
+    ui.set_col_modified_width(get("modified"));
+    ui.set_col_kind_width(get("kind"));
+    ui.set_col_size_width(get("size"));
+    ui.set_column_order(column_order_model(order));
 }
 
 /// Update the chrome shared by both panes (address bar, status, sort indicator).
@@ -409,7 +564,7 @@ pub fn refresh_theme(ui: &AppWindow, dark: bool) {
 /// Chỉ ảnh mới được hỏi: giải mã một tệp văn bản để tìm ảnh thu nhỏ là lãng phí,
 /// và với một thư mục 5000 tệp thì đó là hàng nghìn lời gọi vô ích.
 pub fn queue_thumbnails(app: &Rc<RefCell<App>>, pane: Pane) {
-    let (paths, token) = {
+    let (paths, token, size) = {
         let s = app.borrow();
         let Some(tab) = s.tab_for(pane) else { return };
         let paths: Vec<std::path::PathBuf> = tab
@@ -436,11 +591,14 @@ pub fn queue_thumbnails(app: &Rc<RefCell<App>>, pane: Pane) {
             })
             .map(|e| std::path::PathBuf::from(&e.path))
             .collect();
-        (paths, s.pane_load(pane).token)
+        // Lưới hiển thị ảnh lớn hơn danh sách nên giải mã ở kích thước lớn hơn;
+        // dùng chung một cỡ sẽ ra ảnh nhoè khi phóng to.
+        let size = if s.view_mode == 1 { 96 } else { 48 };
+        (paths, s.pane_load(pane).token, size)
     };
     let worker = &app.borrow().worker;
     for path in paths {
-        worker.submit_thumbnail(path, 48, token);
+        worker.submit_thumbnail(path, size, token);
     }
 }
 
@@ -477,7 +635,7 @@ mod tests {
             watch_dirty: false,
             closed_tabs: Vec::new(),
             show_extensions: true,
-            folders_first: true,
+            folder_order: files_core::sort::FolderOrder::FoldersFirst,
             tags: crate::tags::TagStore::default(),
             tag_path: std::path::PathBuf::from("C:\\t.json"),
             settings: crate::settings::Settings::default(),

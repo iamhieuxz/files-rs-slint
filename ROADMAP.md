@@ -82,17 +82,17 @@ Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
   - **Đã sửa O(n²)**: `view::build_rows` gọi `tab.selection.contains` cho từng hàng. Đổi sang `HashSet` dựng một lần. Đo trên 10.000 mục chọn tất cả: **8.24 ms → 0.20 ms, nhanh 41×**. Test hồi quy: `selecting_every_row_is_not_quadratic`.
   - **Virtualization**: danh sách chi tiết chuyển từ `ScrollView` + `for row[i]` sang `ListView` của Slint, nên chỉ dựng hàng trong vùng nhìn thấy.
   - Lưới vẫn dùng `ScrollView` + nhóm theo hàng; số hàng lưới ít hơn nhiều nên chưa cần đổi.
-- [ ] **D2. Auto-fit cột** — D
-  - Đo độ rộng chữ dài nhất, kẹp theo `column_bounds` đã có.
-- [ ] **D3. Nhóm (Group by)** — T
-  - Nhóm theo tên, ngày sửa, loại, kích thước, thẻ.
-  - Header nhóm trong danh sách; lưu lựa chọn vào settings.
-- [ ] **D4. Ba biến thể sắp xếp** — D
-  - Tách `folders_first` thành ba lựa chọn: thư mục trước, tệp trước, sắp chung.
-- [ ] **D5. Chọn đảo + checkbox chọn** — D
-  - `selection::invert`; checkbox ở cột đầu và `ToggleSelect`.
-- [ ] **D6. Thumbnail trong grid** — T
-  - Grid đang dùng glyph; dùng `has-icon-image` như details.
+- [x] **D2. Auto-fit cột** — D
+  - `files_core::autofit::fit_width` ước lượng theo số ký tự, kẹp trong `column_bounds`. Lệnh `autofit-columns`, lưu vào `settings.column_widths`.
+- [x] **D3. Nhóm (Group by)** — T
+  - `files_core::group`: Name, DateModified, DateCreated, Size, Kind, Tag; đơn vị ngày Năm/Tháng/Ngày. Nhóm giữ thứ tự xuất hiện nên không phá thứ tự cột đã sắp.
+  - Lệnh `group-none|name|modified|created|size|kind|tag`, `group-unit`. 11 test trong `group`.
+- [x] **D4. Ba biến thể sắp xếp** — D
+  - `FolderOrder::{FoldersFirst, FilesFirst, Together}` thay cờ `folders_first`. Nút lặp ba trạng thái, lưu vào `settings.folder_order`.
+- [x] **D5. Chọn đảo + checkbox chọn** — D
+  - `selection::invert` (Ctrl+Shift+I) chỉ đảo trên mục đang hiển thị; `selection::toggle_at` cho checkbox từng dòng.
+- [x] **D6. Thumbnail trong grid** — T
+  - Grid có nhánh `Image` 64px khi đã giải mã; thumbnail xin ở 96px cho lưới và 48px cho danh sách để không nhoè.
 
 ---
 

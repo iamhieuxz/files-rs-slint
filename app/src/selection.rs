@@ -11,6 +11,51 @@ use slint::{Model, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Chọn đảo: mục đang chọn thành không chọn, mục chưa chọn thành được chọn.
+///
+/// Chỉ xét các mục đang hiển thị: mục bị bộ lọc ẩn đi thì không nên đổi trạng
+/// thái, nếu không người dùng sẽ thao tác lên thứ họ không thấy.
+pub fn invert(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    {
+        let mut s = app.borrow_mut();
+        let tab = s.tab_mut();
+        let current: std::collections::HashSet<usize> = tab.selection.iter().copied().collect();
+        tab.selection = tab
+            .visible
+            .iter()
+            .copied()
+            .filter(|i| !current.contains(i))
+            .collect();
+        // Mốc neo không còn nghĩa sau khi đảo; xoá để Shift+click bắt đầu lại.
+        tab.anchor = None;
+    }
+    crate::view::push_view(ui, app);
+    push_status(ui, app);
+}
+
+/// Bật/tắt một mục mà không đổi phần còn lại (checkbox ở cột đầu).
+///
+/// Dùng chung đường với Ctrl+click nhưng không đụng mốc neo theo khoảng, vì
+/// checkbox là thao tác rời rạc.
+#[allow(dead_code)]
+pub fn toggle_at(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize) {
+    {
+        let mut s = app.borrow_mut();
+        let tab = s.tab_mut();
+        let Some(entry_index) = tab.visible.get(visible_index).copied() else {
+            return;
+        };
+        if let Some(pos) = tab.selection.iter().position(|i| *i == entry_index) {
+            tab.selection.remove(pos);
+        } else {
+            tab.selection.push(entry_index);
+        }
+        tab.anchor = Some(entry_index);
+    }
+    crate::view::push_view(ui, app);
+    push_status(ui, app);
+}
+
 pub fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, mode: i32) {
     {
         let mut s = app.borrow_mut();

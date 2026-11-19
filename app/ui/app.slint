@@ -148,6 +148,8 @@ export component AppWindow inherits Window {
     in-out property <string> sort-column: "name";
     in-out property <bool> sort-desc: false;
     in-out property <bool> folders-first: true;
+    // Nhãn của cách tách nhóm thư mục/tệp: "Thư mục trước" | "Tệp trước" | "Sắp chung".
+    in-out property <string> folder-order: "Thư mục trước";
     in-out property <string> filter-text;
     in-out property <bool> filtering: false;
     in-out property <string> clipboard-mode; // "" | "copy" | "cut"
@@ -321,6 +323,8 @@ export component AppWindow inherits Window {
                 }
                 if (key == "y") { root.command("redo"); return accept; }
                 if (key == "a") { root.command("select-all"); return accept; }
+                // Ctrl+Shift+I đảo lựa chọn.
+                if (key == "i" && event.modifiers.shift) { root.command("select-invert"); return accept; }
                 if (key == "h") { root.command("toggle-hidden"); return accept; }
                 if (key == "f") {
                     // Ctrl+Shift+F tìm đệ quy; Ctrl+F chỉ lọc trong thư mục.
@@ -1363,7 +1367,15 @@ export component AppWindow inherits Window {
                                             padding: Theme.s2;
                                             spacing: Theme.s1;
                                             alignment: center;
-                                            FluentIcon {
+                                            // Lưới hiện thumbnail thật khi đã giải mã
+                                            // xong; trong lúc chờ vẫn là glyph.
+                                            if row.has-icon-image: Image {
+                                                source: row.icon-image;
+                                                width: 64px;
+                                                height: 64px;
+                                                image-fit: contain;
+                                            }
+                                            if !row.has-icon-image: FluentIcon {
                                                 name: row.icon;
                                                 width: 40px;
                                                 height: 40px;

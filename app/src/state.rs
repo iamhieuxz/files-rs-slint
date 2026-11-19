@@ -90,6 +90,10 @@ pub struct Tab {
     pub filter: String,
     /// Row indices after filtering; `entries` stays the source of truth.
     pub visible: Vec<usize>,
+    /// Cách nhóm đang chọn; `None` là danh sách phẳng.
+    pub group_by: files_core::group::GroupBy,
+    /// Đơn vị gom ngày khi nhóm theo ngày.
+    pub group_unit: files_core::group::DateUnit,
     /// Entries dropped by the hidden filter, reported in the status bar.
     pub hidden_count: usize,
 }
@@ -105,6 +109,8 @@ impl Tab {
             filter: String::new(),
             visible: Vec::new(),
             hidden_count: 0,
+            group_by: files_core::group::GroupBy::None,
+            group_unit: files_core::group::DateUnit::Month,
         }
     }
 
@@ -178,7 +184,7 @@ pub struct App {
     /// Hide `.txt`-style extensions in the name column.
     pub show_extensions: bool,
     /// Group folders above files, or sort them together.
-    pub folders_first: bool,
+    pub folder_order: files_core::sort::FolderOrder,
     /// Thẻ màu của tệp và thư mục, cùng nơi lưu để ghi lại khi thay đổi.
     pub tags: tags::TagStore,
     pub tag_path: PathBuf,
@@ -311,7 +317,7 @@ pub fn apply_saved_ui(ui: &AppWindow, app: &App) {
     ui.set_show_sidebar(app.show_sidebar);
     ui.set_show_preview(app.show_preview);
     ui.set_show_hidden(app.show_hidden);
-    ui.set_folders_first(app.folders_first);
+    ui.set_folder_order(slint::SharedString::from(app.folder_order.label()));
     ui.set_column_order(crate::view::column_order_model(&app.settings.column_order));
     let width = |id: &str| {
         app.settings
@@ -340,7 +346,7 @@ fn snapshot_for_save(app: &std::rc::Rc<std::cell::RefCell<App>>) -> (PathBuf, se
         show_preview: a.show_preview,
         show_hidden: a.show_hidden,
         show_extensions: a.show_extensions,
-        folders_first: a.folders_first,
+        folder_order: a.folder_order,
         pinned_folders: a.settings.pinned_folders.clone(),
         column_order: a.settings.column_order.clone(),
         column_widths: a.settings.column_widths.clone(),
@@ -430,6 +436,40 @@ mod tests {
     }
 
     #[test]
+    fn grouping_keeps_every_visible_row_exactly_once() {
+        // Nhóm không được làm mất hoặc lặp hàng: `visible` là nguồn sự thật và
+        // mọi chỉ số phải xuất hiện đúng một lần trong thứ tự đã nhóm.
+        let mut tab = Tab::new(PathBuf::from("C:\\"));
+        tab.entries = (0..20)
+            .map(|i| entry(&format!("{}.txt", (b'a' + (i % 5) as u8) as char)))
+            .collect();
+        tab.rebuild_visible();
+        tab.group_by = files_core::group::GroupBy::Name;
+
+        let (order, headers) = crate::view::grouped_rows(&tab, |_| None);
+
+        assert_eq!(order.len(), tab.visible.len(), "mất hoặc lặp hàng");
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), tab.visible.len());
+        assert!(!headers.is_empty(), "phải có header nhóm");
+    }
+
+    #[test]
+    fn grouping_off_returns_the_visible_order_unchanged() {
+        let mut tab = Tab::new(PathBuf::from("C:\\"));
+        tab.entries = vec![entry("b.txt"), entry("a.txt")];
+        tab.rebuild_visible();
+        tab.group_by = files_core::group::GroupBy::None;
+
+        let (order, headers) = crate::view::grouped_rows(&tab, |_| None);
+
+        assert_eq!(order, tab.visible, "không nhóm thì giữ nguyên thứ tự");
+        assert!(headers.is_empty(), "không nhóm thì không có header");
+    }
+
+    #[test]
     fn selecting_every_row_is_not_quadratic() {
         // `Tab::selected_paths` và phép dựng hàng đều dựa vào `selection`.
         // Trước đây mỗi hàng gọi `selection.contains`, thành O(n²) khi chọn hết.
@@ -494,7 +534,7 @@ mod tests {
             watch_dirty: false,
             closed_tabs: Vec::new(),
             show_extensions: true,
-            folders_first: true,
+            folder_order: files_core::sort::FolderOrder::FoldersFirst,
             tags: tags::TagStore::default(),
             tag_path: PathBuf::from("C:\\t.json"),
             settings: settings::Settings::default(),

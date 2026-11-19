@@ -309,7 +309,7 @@ fn apply_sort(ui: &AppWindow, app: &Rc<RefCell<App>>, column: &str) {
         t.sort = SortSpec {
             by,
             direction,
-            folders_first: t.sort.folders_first,
+            folder_order: t.sort.folder_order,
         };
         let spec = t.sort;
         spec.sort(&mut t.entries);

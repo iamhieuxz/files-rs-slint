@@ -108,7 +108,7 @@ fn sorting_by_size_changes_the_order() {
         &dir,
         SortSpec {
             by: SortBy::Size,
-            folders_first: false,
+            folder_order: files_core::sort::FolderOrder::Together,
             ..Default::default()
         },
         ListOptions::default(),

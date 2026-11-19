@@ -290,7 +290,7 @@ pub fn refresh(ui: &SettingsWindow, app: &Rc<RefCell<App>>) {
     ui.set_dual_pane(a.right.is_some());
     ui.set_show_hidden(a.show_hidden);
     ui.set_show_extensions(a.show_extensions);
-    ui.set_folders_first(a.folders_first);
+    ui.set_folder_order(SharedString::from(a.folder_order.label()));
 }
 
 /// Trả `Some(id)` khi `page` là trang có thật.

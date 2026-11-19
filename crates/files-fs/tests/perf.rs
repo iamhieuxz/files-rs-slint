@@ -29,7 +29,7 @@ fn listing_and_sorting_ten_thousand_files_stays_bounded() {
     let spec = SortSpec {
         by: SortBy::Name,
         direction: SortDirection::Ascending,
-        folders_first: true,
+        folder_order: files_core::sort::FolderOrder::FoldersFirst,
     };
     let opts = ListOptions {
         show_hidden: true,
