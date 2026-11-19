@@ -620,7 +620,8 @@ pub fn copy_text_to_clipboard(text: &str) -> Result<(), FsError> {
 
 /// Open a terminal (Windows Terminal if present, else `cmd`) in `dir`.
 pub fn open_terminal(dir: &Path) -> Result<(), FsError> {
-    // Windows Terminal is the default on 11 and understands `-d`.
+    // Windows Terminal is the default on 11 and understands `-d`. Terminal là
+    // thứ người dùng **muốn** thấy, nên không ẩn cửa sổ ở đây.
     let wt = std::process::Command::new("wt.exe")
         .arg("-d")
         .arg(dir)
@@ -628,14 +629,25 @@ pub fn open_terminal(dir: &Path) -> Result<(), FsError> {
     if wt.is_ok() {
         return Ok(());
     }
-    std::process::Command::new("cmd.exe")
+    let mut command = std::process::Command::new("cmd.exe");
+    command
         .arg("/C")
         .arg("start")
         .arg("cmd.exe")
         .arg("/K")
         .arg("cd")
         .arg("/D")
-        .arg(dir)
+        .arg(dir);
+    // Cửa sổ `cmd` con do `start` tạo là thứ người dùng cần; nhưng tiến trình
+    // `cmd /C start` trung gian cũng tạo một console nháy lên trước đó. Ẩn nó đi
+    // mà vẫn để `start` mở cửa sổ terminal thật.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
         .spawn()
         .map(|_| ())
         .map_err(|e| FsError::new("spawn_failed", format!("Không mở được terminal: {e}")))

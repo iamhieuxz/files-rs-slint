@@ -117,8 +117,17 @@ pub fn unregister() -> Result<(), FsError> {
 /// Windows không cho đặt mặc định bằng code; đây là bước duy nhất còn lại và
 /// nó cần người dùng bấm.
 pub fn open_settings_page() -> Result<(), FsError> {
-    std::process::Command::new("cmd.exe")
-        .args(["/C", "start", "ms-settings:defaultapps"])
+    let mut command = std::process::Command::new("cmd.exe");
+    command.args(["/C", "start", "ms-settings:defaultapps"]);
+    // `cmd.exe` là chương trình console; app này là GUI nên Windows sẽ cấp cửa
+    // sổ console mới và nó nháy lên. Ẩn hoàn toàn.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
         .spawn()
         .map(|_| ())
         .map_err(|e| FsError::new("spawn_failed", format!("Không mở được Settings: {e}")))

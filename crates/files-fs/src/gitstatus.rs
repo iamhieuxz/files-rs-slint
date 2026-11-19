@@ -74,21 +74,31 @@ pub fn status_for(dir: &Path) -> StatusMap {
 
     // `--porcelain=v1 -z` gives a stable, parseable form; `-z` avoids quoting
     // problems with spaces and non-ASCII names.
-    let output = Command::new("git")
-        .args([
-            // `--no-optional-locks` là option TOÀN CỤC của git, phải đứng trước
-            // subcommand. Đặt sau `status` thì git báo "unknown option" và lệnh
-            // luôn thất bại — lỗi này từng làm tính năng im lặng không chạy.
-            "--no-optional-locks",
-            "-C",
-            &dir.to_string_lossy(),
-            "status",
-            "--porcelain=v1",
-            "-z",
-            // Include untracked files individually instead of collapsing folders.
-            "--untracked-files=all",
-        ])
-        .output();
+    let mut command = Command::new("git");
+    command.args([
+        // `--no-optional-locks` là option TOÀN CỤC của git, phải đứng trước
+        // subcommand. Đặt sau `status` thì git báo "unknown option" và lệnh
+        // luôn thất bại — lỗi này từng làm tính năng im lặng không chạy.
+        "--no-optional-locks",
+        "-C",
+        &dir.to_string_lossy(),
+        "status",
+        "--porcelain=v1",
+        "-z",
+        // Include untracked files individually instead of collapsing folders.
+        "--untracked-files=all",
+    ]);
+    // `git` là chương trình console. App này là GUI (`windows_subsystem =
+    // "windows"`), nên Windows cấp cho tiến trình con một cửa sổ console mới và
+    // nó **nháy lên** mỗi lần đọc trạng thái — tức mỗi lần mở thư mục. Đặt
+    // CREATE_NO_WINDOW để console được tạo nhưng ẩn hoàn toàn.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output();
 
     let Ok(output) = output else {
         return map;
