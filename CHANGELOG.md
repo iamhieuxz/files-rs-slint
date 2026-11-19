@@ -6,6 +6,26 @@ Mọi thay đổi đáng chú ý của dự án được ghi ở đây. Định 
 
 ## [Chưa phát hành]
 
+### Sẽ làm
+- Duyệt và khôi phục Thùng rác (giai đoạn B, đang hoãn).
+- Kéo tab đổi thứ tự, chia pane ngang/dọc, compact overlay (giai đoạn E).
+
+## [2.2.0] — 2026-11-19
+
+Bản này hoàn tất giai đoạn D: ảo hoá danh sách và các cách xem, sắp xếp, nhóm.
+
+### Thêm
+- **Tự vừa cột theo nội dung** (`autofit-columns`): ước lượng bề rộng theo từng
+  nhóm ký tự nên cột toàn chữ hoa hay toàn số không bị hụt.
+- **Nhóm danh sách** theo tên, ngày sửa, ngày tạo, kích thước, loại hoặc thẻ màu,
+  kèm **dải tiêu đề nhóm** hiển thị trong danh sách. Đơn vị gom ngày chọn được
+  Năm/Tháng/Ngày.
+- **Ba cách tách nhóm thư mục/tệp**: thư mục trước, tệp trước, sắp chung. Nút lặp
+  qua ba trạng thái và được lưu lại.
+- **Đảo lựa chọn** (`Ctrl+Shift+I`), chỉ áp dụng cho mục đang hiển thị.
+- **Checkbox từng dòng**: bấm ô chọn ở đầu tên để bật/tắt riêng dòng đó.
+- **Thumbnail trong lưới**: ảnh thật thay cho glyph, giải mã ở 96px để không nhoè.
+
 ### Thay đổi
 - **Ảo hoá danh sách chi tiết**: dùng `ListView` của Slint thay cho `ScrollView`
   cộng vòng lặp, nên chỉ những hàng trong vùng nhìn thấy mới được dựng.
@@ -14,14 +34,9 @@ Mọi thay đổi đáng chú ý của dự án được ghi ở đây. Định 
   10.000 mục chọn tất cả: 8.24 ms → 0.20 ms.
 - Thêm `CHANGELOG.md`.
 
-### Thêm
-- **Tự vừa cột theo nội dung** (`autofit-columns`).
-- **Nhóm danh sách** theo tên, ngày sửa, ngày tạo, kích thước, loại hoặc thẻ màu;
-  đơn vị gom ngày chọn được Năm/Tháng/Ngày.
-- **Ba cách tách nhóm thư mục/tệp**: thư mục trước, tệp trước, sắp chung. Nút
-  lặp qua ba trạng thái và được lưu lại.
-- **Đảo lựa chọn** (`Ctrl+Shift+I`), chỉ áp dụng cho mục đang hiển thị.
-- **Thumbnail trong lưới**: ảnh thật thay cho glyph, giải mã ở 96px để không nhoè.
+### Đã biết
+- Checkbox từng dòng đọc được bằng trình đọc màn hình nhưng Slint 1.19 chưa sinh
+  `TogglePattern`, nên chưa bật/tắt được bằng UIA; chuột và `Ctrl+Shift+I` vẫn dùng.
 
 ## [2.1.0] — 2026-11-19
 
