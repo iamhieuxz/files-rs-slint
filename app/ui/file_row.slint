@@ -23,4 +23,8 @@ export struct FileRow {
     // Vị trí trong danh sách đang hiển thị; cần cho grid vì ở đó mỗi ô
     // không còn chỉ số dòng như trong vòng lặp for row[i].
     index: int,
+    // Hàng này là dải tiêu đề nhóm, không phải mục tệp. Khi bật, các trường
+    // khác rỗng và `group-label` là chữ hiển thị.
+    is-group-header: bool,
+    group-label: string,
 }

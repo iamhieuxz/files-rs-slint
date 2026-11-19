@@ -752,6 +752,16 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             ui.set_dialog_open(false);
         });
     }
+    {
+        let (w, a) = (ui.as_weak(), app.clone());
+        ui.on_toggle_row(move |index| {
+            let Some(ui) = w.upgrade() else { return };
+            if index < 0 {
+                return;
+            }
+            crate::selection::toggle_at(&ui, &a, index as usize);
+        });
+    }
     // ---- Settings ----
     // Cửa sổ Settings là cửa sổ riêng. Nó phát lệnh về đây để cửa sổ chính thực
     // thi và lưu, nên chỉ có một đường ghi `settings.json`.

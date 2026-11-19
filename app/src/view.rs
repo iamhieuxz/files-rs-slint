@@ -83,13 +83,12 @@ fn build_rows(a: &App, tab: &Tab, grid_width: f32) -> (Vec<FileRow>, Vec<ModelRc
     let selected: std::collections::HashSet<usize> = tab.selection.iter().copied().collect();
     // Thứ tự hiển thị: phẳng, hoặc đã gom theo nhóm. `index` của mỗi hàng vẫn là
     // chỉ số trong `visible` để chọn/mở không lệch.
-    let order = grouped_rows(tab, |e| {
+    let (order, headers) = grouped_rows(tab, |e| {
         a.tags
             .tags_for(Path::new(&e.path))
             .first()
             .map(|t| t.name.clone())
-    })
-    .0;
+    });
     let rows: Vec<FileRow> = order
         .iter()
         .enumerate()
@@ -136,9 +135,36 @@ fn build_rows(a: &App, tab: &Tab, grid_width: f32) -> (Vec<FileRow>, Vec<ModelRc
                 icon_image: slint::Image::default(),
                 has_icon_image: false,
                 index: visible_index as i32,
+                is_group_header: false,
+                group_label: SharedString::default(),
             })
         })
         .collect();
+
+    // Chèn dải tiêu đề nhóm vào đúng vị trí. `index` của hàng header là -1 để
+    // chọn/mở không bao giờ trúng nhầm header.
+    let rows = if headers.is_empty() {
+        rows
+    } else {
+        let mut with_headers = Vec::with_capacity(rows.len() + headers.len());
+        let mut next_header = headers.iter().peekable();
+        for (i, row) in rows.into_iter().enumerate() {
+            while let Some((at, label)) = next_header.peek() {
+                if *at == i {
+                    with_headers.push(header_row(label));
+                    next_header.next();
+                } else {
+                    break;
+                }
+            }
+            with_headers.push(row);
+        }
+        // Nhóm rỗng (hiếm, khi mọi mục bị lọc) vẫn phải hiện header.
+        for (_, label) in next_header {
+            with_headers.push(header_row(label));
+        }
+        with_headers
+    };
 
     let per_row = grid_columns(grid_width);
     let grid_rows = format::chunk_rows(&rows, per_row)
@@ -146,6 +172,43 @@ fn build_rows(a: &App, tab: &Tab, grid_width: f32) -> (Vec<FileRow>, Vec<ModelRc
         .map(|line| ModelRc::new(VecModel::from(line)))
         .collect();
     (rows, grid_rows)
+}
+
+/// Một hàng chỉ để hiện tiêu đề nhóm.
+fn header_row(label: &str) -> FileRow {
+    FileRow {
+        name: SharedString::from(label),
+        path: SharedString::default(),
+        is_dir: false,
+        is_hidden: false,
+        selected: false,
+        size: SharedString::default(),
+        modified: SharedString::default(),
+        kind: SharedString::default(),
+        has_tag: false,
+        tag_name: SharedString::default(),
+        tag_color: slint::Color::from_argb_u8(0, 0, 0, 0),
+        icon: SharedString::default(),
+        glyph: slint::Color::from_argb_u8(0, 0, 0, 0),
+        git_letter: SharedString::default(),
+        git_color: slint::Color::from_argb_u8(0, 0, 0, 0),
+        icon_image: slint::Image::default(),
+        has_icon_image: false,
+        // -1: không phải mục thật, nên click không chọn gì.
+        index: -1,
+        is_group_header: true,
+        group_label: SharedString::from(label),
+    }
+}
+
+/// Dựng hàng cho test: cùng đường với `build_rows` nhưng công khai trong crate.
+#[cfg(test)]
+pub fn build_rows_for_test(
+    a: &App,
+    tab: &Tab,
+    grid_width: f32,
+) -> (Vec<FileRow>, Vec<ModelRc<FileRow>>) {
+    build_rows(a, tab, grid_width)
 }
 
 /// Đặt cách nhóm và vẽ lại.
@@ -216,7 +279,7 @@ pub fn grouped_rows(
 /// quả ghi vào `settings.column_widths` và đẩy ngay vào UI, nên lần mở sau vẫn
 /// giữ đúng.
 pub fn autofit_columns(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    use crate::settings::{column_bounds, column_default_width};
+    use crate::settings::column_bounds;
     use files_core::autofit::fit_width;
 
     let (widths, order) = {
@@ -224,47 +287,54 @@ pub fn autofit_columns(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let tab = s.tab();
         // Lấy tên hiển thị đúng như danh sách đang vẽ, để cột không bị hụt khi
         // phần mở rộng bị ẩn.
-        let names: Vec<usize> = tab
+        // Giữ chuỗi hiển thị, không chỉ số ký tự: `fit_width` ước lượng theo
+        // từng ký tự nên chữ hoa và số được tính rộng hơn chữ thường.
+        let names: Vec<String> = tab
             .visible
             .iter()
             .filter_map(|i| tab.entries.get(*i))
-            .map(|e| {
-                crate::format::display_name(&e.name, e.is_dir(), s.show_extensions)
-                    .chars()
-                    .count()
-            })
+            .map(|e| crate::format::display_name(&e.name, e.is_dir(), s.show_extensions))
             .collect();
-        let kinds: Vec<usize> = tab
+        let kinds: Vec<String> = tab
             .visible
             .iter()
             .filter_map(|i| tab.entries.get(*i))
-            .map(|e| crate::format::kind_label(e).chars().count())
+            .map(crate::format::kind_label)
             .collect();
-        let sizes: Vec<usize> = tab
+        let sizes: Vec<String> = tab
             .visible
             .iter()
             .filter_map(|i| tab.entries.get(*i))
-            .map(|e| crate::format::format_size(e.size).chars().count())
+            .map(|e| crate::format::format_size(e.size))
             .collect();
-        let dates: Vec<usize> = tab
+        let dates: Vec<String> = tab
             .visible
             .iter()
             .filter_map(|i| tab.entries.get(*i))
-            .map(|e| crate::format::format_time(e.modified_ms).chars().count())
+            .map(|e| crate::format::format_time(e.modified_ms))
             .collect();
 
         let mut widths = s.settings.column_widths.clone();
         let (nmin, nmax) = column_bounds("name");
-        // Cột tên có icon ở đầu nên cộng thêm chỗ cho icon và khoảng cách.
-        widths.insert("name".into(), fit_width(names.into_iter(), nmin, nmax, 24));
+        // Cột tên có checkbox và icon ở đầu nên cộng thêm chỗ cho chúng.
+        widths.insert(
+            "name".into(),
+            fit_width(names.iter().map(|s| s.as_str()), nmin, nmax, 48),
+        );
         let (kmin, kmax) = column_bounds("kind");
-        widths.insert("kind".into(), fit_width(kinds.into_iter(), kmin, kmax, 0));
+        widths.insert(
+            "kind".into(),
+            fit_width(kinds.iter().map(|s| s.as_str()), kmin, kmax, 0),
+        );
         let (smin, smax) = column_bounds("size");
-        widths.insert("size".into(), fit_width(sizes.into_iter(), smin, smax, 0));
+        widths.insert(
+            "size".into(),
+            fit_width(sizes.iter().map(|s| s.as_str()), smin, smax, 0),
+        );
         let (mmin, mmax) = column_bounds("modified");
         widths.insert(
             "modified".into(),
-            fit_width(dates.into_iter(), mmin, mmax, 0),
+            fit_width(dates.iter().map(|s| s.as_str()), mmin, mmax, 0),
         );
         (widths, s.settings.column_order.clone())
     };
@@ -277,7 +347,6 @@ pub fn autofit_columns(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     // Đẩy vào UI bằng cùng đường mà thao tác kéo cột đang dùng.
     apply_column_widths(ui, &widths, &order);
     ui.set_status_message(SharedString::from("Đã vừa cột theo nội dung"));
-    let _ = column_default_width;
 }
 
 /// Ghi bề rộng cột vào các property tương ứng của `AppWindow`.

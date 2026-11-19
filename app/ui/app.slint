@@ -223,6 +223,8 @@ export component AppWindow inherits Window {
     callback open-row(int);
     // mode: 0 = thay thế, 1 = shift (chọn khoảng), 2 = ctrl (thêm/bớt)
     callback select-row(int, int);
+    // Bật/tắt đúng một dòng (checkbox), không đổi phần còn lại.
+    callback toggle-row(int);
     callback go-back();
     callback go-forward();
     callback go-up();
@@ -1169,14 +1171,31 @@ export component AppWindow inherits Window {
                                 // `for row[i]`, nên thư mục 10.000 mục tạo 10.000
                                 // phần tử UI mỗi lần vẽ lại.
                                 for row[i] in root.rows: Rectangle {
-                                    height: Theme.row-height;
+                                    // Dải tiêu đề nhóm: cao hơn một chút, nền khác,
+                                    // không có cột và không bấm chọn được.
+                                    height: row.is-group-header ? Theme.row-height + 8px : Theme.row-height;
                                     border-radius: Theme.r-sm;
-                                    background: row.selected ? Theme.accent-subtle
+                                    background: row.is-group-header ? Theme.solid-secondary
+                                        : row.selected ? Theme.accent-subtle
                                         : rta.has-hover ? Theme.subtle-hover
                                         : transparent;
                                     animate background { duration: 70ms; }
 
-                                    HorizontalLayout {
+                                    if row.is-group-header: HorizontalLayout {
+                                        padding-left: Theme.list-pad;
+                                        padding-right: Theme.list-pad;
+                                        spacing: Theme.s2;
+                                        alignment: start;
+                                        Text {
+                                            text: row.group-label;
+                                            color: Theme.text-secondary;
+                                            font-size: Theme.font-caption;
+                                            font-weight: Theme.weight-semibold;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    if !row.is-group-header: HorizontalLayout {
                                         // Cùng token với header.
                                         padding-left: Theme.list-pad;
                                         padding-right: Theme.list-pad;
@@ -1197,6 +1216,36 @@ export component AppWindow inherits Window {
 
                                             if id == "name": HorizontalLayout {
                                                 spacing: Theme.icon-gap;
+                                                // Ô chọn: bấm vào đây chỉ bật/tắt dòng
+                                                // này, không đổi phần còn lại.
+                                                Rectangle {
+                                                    width: 16px;
+                                                    height: 16px;
+                                                    border-radius: Theme.r-xs;
+                                                    border-width: 1px;
+                                                    border-color: row.selected ? Theme.accent : Theme.stroke-strong;
+                                                    background: row.selected ? Theme.accent : transparent;
+                                                    y: (parent.height - 16px) / 2;
+                                                    // Accessibility đặt trên Rectangle, không
+                                                    // trên TouchArea: UIA cần phần tử có role để
+                                                    // sinh TogglePattern cho trình đọc màn hình.
+                                                    accessible-role: checkbox;
+                                                    accessible-label: row.name;
+                                                    accessible-checked: row.selected;
+                                                    accessible-action-default => { root.toggle-row(row.index); }
+                                                    if row.selected: FluentIcon {
+                                                        name: "checkmark";
+                                                        width: 12px;
+                                                        height: 12px;
+                                                        x: 2px;
+                                                        y: 2px;
+                                                        tint: Theme.text-on-accent;
+                                                    }
+                                                    cta := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.toggle-row(row.index); }
+                                                    }
+                                                }
                                                 // Icon: ảnh thật của Windows nếu có, ngược lại glyph Fluent.
                                                 if row.has-icon-image: Image {
                                                     source: row.icon-image;
@@ -1215,7 +1264,7 @@ export component AppWindow inherits Window {
                                                 Text {
                                                     // width cố định + elide: tên dài bị cắt,
                                                     // không đẩy các cột sau.
-                                                    width: root.col-name-width - Theme.icon-size - Theme.icon-gap;
+                                                    width: root.col-name-width - Theme.icon-size - Theme.icon-gap - 16px - Theme.icon-gap;
                                                     text: row.name;
                                                     color: row.is-hidden ? Theme.text-tertiary : Theme.text-primary;
                                                     font-size: Theme.font-body;

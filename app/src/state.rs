@@ -436,6 +436,33 @@ mod tests {
     }
 
     #[test]
+    fn group_headers_are_marked_and_cannot_be_selected() {
+        // Hàng header phải có `is_group_header` và `index = -1`; nếu không, một
+        // cú click vào dải tiêu đề sẽ chọn nhầm mục thật.
+        let mut tab = Tab::new(PathBuf::from("C:\\"));
+        tab.entries = vec![entry("apple.txt"), entry("banana.txt")];
+        tab.rebuild_visible();
+        tab.group_by = files_core::group::GroupBy::Name;
+
+        let mut app = test_app();
+        app.tabs[0] = tab;
+        let (rows, _grid) = crate::view::build_rows_for_test(&app, app.tab(), 900.0);
+
+        let headers: Vec<&FileRow> = rows.iter().filter(|r| r.is_group_header).collect();
+        assert_eq!(headers.len(), 2, "hai chữ cái đầu khác nhau → hai nhóm");
+        assert!(
+            headers.iter().all(|h| h.index == -1),
+            "header không được có index"
+        );
+        assert!(headers.iter().all(|h| !h.group_label.is_empty()));
+        // Mọi hàng không phải header đều có index hợp lệ.
+        assert!(rows
+            .iter()
+            .filter(|r| !r.is_group_header)
+            .all(|r| r.index >= 0));
+    }
+
+    #[test]
     fn grouping_keeps_every_visible_row_exactly_once() {
         // Nhóm không được làm mất hoặc lặp hàng: `visible` là nguồn sự thật và
         // mọi chỉ số phải xuất hiện đúng một lần trong thứ tự đã nhóm.

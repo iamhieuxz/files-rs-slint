@@ -17,20 +17,37 @@ const AVG_CHAR_PX: f32 = 7.2;
 /// Khoảng đệm hai bên và phần icon của một ô, tính bằng pixel.
 const CELL_PADDING_PX: f32 = 24.0;
 
+/// Bề rộng của một ký tự theo nhóm, để ước lượng sát hơn một hằng số chung.
+///
+/// Font tỉ lệ: `i`, `l`, dấu cách rất hẹp; `W`, `M` rất rộng. Dùng một hệ số cho
+/// mọi ký tự khiến cột toàn chữ hoa bị hụt và cột toàn chữ thường bị thừa.
+fn char_px(c: char) -> f32 {
+    match c {
+        // Hẹp: dấu cách, dấu câu mảnh, chữ thường có nét dọc.
+        ' ' | '.' | ',' | ':' | ';' | '\'' | '!' | '|' | 'i' | 'l' | 'j' | 'I' => 4.0,
+        // Rộng: chữ hoa và chữ thường có nhiều nét ngang.
+        'W' | 'M' | 'w' | 'm' | 'Q' | 'O' | '@' => 12.0,
+        // Số và chữ hoa trung bình rộng hơn chữ thường.
+        c if c.is_ascii_digit() => 8.0,
+        c if c.is_ascii_uppercase() => 9.5,
+        // Ký tự có dấu tiếng Việt chiếm gần như chữ thường cùng cỡ.
+        _ => AVG_CHAR_PX,
+    }
+}
+
 /// Bề rộng cần cho một chuỗi, trước khi kẹp theo giới hạn cột.
 pub fn text_width_px(text: &str) -> u32 {
-    let chars = text.chars().count() as f32;
-    (chars * AVG_CHAR_PX + CELL_PADDING_PX).ceil() as u32
+    let width: f32 = text.chars().map(char_px).sum();
+    (width + CELL_PADDING_PX).ceil() as u32
 }
 
 /// Bề rộng vừa nội dung, kẹp trong `(min, max)`.
 ///
-/// `extra` là phần cố định của ô (icon, khoảng cách) mà chuỗi không tính tới;
-/// `tag` và `git` dùng tham số này.
-pub fn fit_width(texts: impl Iterator<Item = usize>, min: u32, max: u32, extra: u32) -> u32 {
-    let widest = texts.max().unwrap_or(0);
-    let needed = (widest as f32 * AVG_CHAR_PX + CELL_PADDING_PX + extra as f32).ceil() as u32;
-    needed.clamp(min, max)
+/// `texts` là các chuỗi sẽ hiển thị; `extra` là phần cố định của ô (icon, khoảng
+/// cách) mà chuỗi không tính tới — cột tên và cột thẻ dùng tham số này.
+pub fn fit_width<'a>(texts: impl Iterator<Item = &'a str>, min: u32, max: u32, extra: u32) -> u32 {
+    let widest = texts.map(text_width_px).max().unwrap_or(0);
+    (widest + extra).clamp(min, max)
 }
 
 #[cfg(test)]
@@ -51,22 +68,36 @@ mod tests {
     #[test]
     fn fit_width_respects_the_bounds() {
         // Rất ngắn: không được nhỏ hơn min.
-        assert_eq!(fit_width([1, 2].into_iter(), 120, 600, 0), 120);
+        assert_eq!(fit_width(["a"].into_iter(), 120, 600, 0), 120);
         // Rất dài: không được vượt max.
-        assert_eq!(fit_width([500].into_iter(), 120, 600, 0), 600);
+        let long = "W".repeat(200);
+        assert_eq!(fit_width([long.as_str()].into_iter(), 120, 600, 0), 600);
     }
 
     #[test]
     fn fit_width_uses_the_widest_entry() {
-        let narrow = fit_width([3].into_iter(), 50, 1000, 0);
-        let wide = fit_width([3, 40].into_iter(), 50, 1000, 0);
+        let narrow = fit_width(["abc"].into_iter(), 50, 1000, 0);
+        let wide = fit_width(["abc", "wwwwwwwwwwwwwwwwwwww"].into_iter(), 50, 1000, 0);
         assert!(wide > narrow, "mục dài nhất phải quyết định bề rộng");
     }
 
     #[test]
     fn extra_pixels_are_added_once() {
-        let base = fit_width([10].into_iter(), 10, 1000, 0);
-        let with_icon = fit_width([10].into_iter(), 10, 1000, 20);
+        let base = fit_width(["abcdefghij"].into_iter(), 10, 1000, 0);
+        let with_icon = fit_width(["abcdefghij"].into_iter(), 10, 1000, 20);
         assert_eq!(with_icon, base + 20);
+    }
+
+    #[test]
+    fn wide_letters_ask_for_more_room_than_narrow_ones() {
+        // "WWWW" rộng hơn "iiii" dù cùng số ký tự — đây là lý do phải ước lượng
+        // theo từng ký tự thay vì một hệ số chung.
+        assert!(text_width_px("WWWW") > text_width_px("iiii"));
+    }
+
+    #[test]
+    fn uppercase_and_digits_are_wider_than_lowercase() {
+        assert!(text_width_px("AAAA") > text_width_px("aaaa"));
+        assert!(text_width_px("1234") > text_width_px("iiii"));
     }
 }
