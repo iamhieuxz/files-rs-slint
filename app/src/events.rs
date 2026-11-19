@@ -450,6 +450,10 @@ pub fn install_result_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Rc<Timer> 
 }
 
 /// Poll the directory watcher and refresh when the folder changes.
+///
+/// Sự kiện có thể tới trong lúc một lần đọc đang chạy. Nuốt nó ở đó là mất thay
+/// đổi: danh sách sẽ hiện trạng thái cũ cho tới lần làm mới sau. Vì vậy sự kiện
+/// được ghi vào cờ `watch_dirty` và chỉ xoá khi thực sự xếp được một lần đọc.
 pub fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Rc<Timer> {
     let (w, a) = (ui.as_weak(), app.clone());
     let timer = Timer::default();
@@ -462,16 +466,21 @@ pub fn install_watch_pump(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Rc<Timer> {
                 None => false,
             }
         };
-        // Một lần đọc đang chạy thì bỏ qua nhịp này: nếu không, mỗi sự kiện
-        // của `notify` lại xếp thêm một lần đọc và UI quay vòng vô ích.
-        let busy = {
-            let s = a.borrow();
-            s.pane_load(s.active_pane).in_flight
+        // Một lần đọc đang chạy thì ghi nhớ sự kiện lại: nếu không, mỗi sự kiện
+        // của `notify` lại xếp thêm một lần đọc và UI quay vòng vô ích, nhưng
+        // bỏ hẳn thì thay đổi bị mất.
+        let (busy, pane) = {
+            let mut s = a.borrow_mut();
+            if fired {
+                s.watch_dirty = true;
+            }
+            (s.pane_load(s.active_pane).in_flight, s.active_pane)
         };
-        let pane = a.borrow().active_pane;
-        if fired && !busy {
-            reload_pane(&ui, &a, pane);
+        if busy || !a.borrow().watch_dirty {
+            return;
         }
+        a.borrow_mut().watch_dirty = false;
+        reload_pane(&ui, &a, pane);
     });
     Rc::new(timer)
 }

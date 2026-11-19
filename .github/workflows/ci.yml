@@ -33,6 +33,28 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+      # Khoảng trắng thừa và dòng trống cuối tệp không làm hỏng build nhưng tạo
+      # nhiễu trong diff. `git diff --check` trên checkout sạch luôn rỗng, nên
+      # quét trực tiếp các tệp văn bản đã track. Tệp nhị phân (png, ico) bị bỏ
+      # qua: chúng không có khái niệm khoảng trắng cuối dòng.
+      - name: Diff hygiene
+        shell: pwsh
+        run: |
+          $binary = @('.png', '.ico', '.jpg', '.jpeg', '.gif', '.webp', '.zip', '.exe', '.dll')
+          $bad = @()
+          foreach ($f in (git ls-files)) {
+            if ($binary -contains [System.IO.Path]::GetExtension($f).ToLowerInvariant()) { continue }
+            $text = Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue
+            if ($null -eq $text) { continue }
+            if ($text -match '[ \t]+\r?\n') { $bad += "$f (trailing whitespace)" }
+            if ($text -match '(\r?\n){2,}$') { $bad += "$f (blank line at EOF)" }
+          }
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
+          Write-Host "No trailing whitespace or blank line at EOF."
+
       - name: Build (debug)
         run: cargo build --workspace
 

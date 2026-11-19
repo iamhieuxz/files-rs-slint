@@ -72,6 +72,7 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
         results,
         watch: None,
         watched_path: None,
+        watch_dirty: false,
         closed_tabs: Vec::new(),
         show_extensions: saved.show_extensions,
         folders_first: saved.folders_first,

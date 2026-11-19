@@ -8,11 +8,11 @@
 
 ## Trạng thái nền
 
-Đo ngày 2026-11-19, sau commit `a660136`.
+Đo ngày 2026-11-19, sau khi hoàn thành giai đoạn A.
 
 | Chỉ số | Giá trị |
 |---|---|
-| Test | 248 pass, 0 hỏng (`cargo test --workspace`) |
+| Test | 249 pass, 0 hỏng (`cargo test --workspace`) |
 | Clippy | 0 cảnh báo (`--all-targets -- -D warnings`) |
 | Format | `cargo fmt --all -- --check` sạch |
 | Module > 800 dòng | `app.slint` 2166, `commands.rs` 990, `wiring.rs` 912 |
@@ -27,18 +27,18 @@
 
 Các mục này nhỏ nhưng chặn chất lượng của mọi thứ phía sau.
 
-- [ ] **A1. `// SAFETY:` cho `native_drop.rs`** — D
-  - 23 lần dùng `unsafe`, hiện chỉ một phần có comment. Bổ sung cho các dòng ghi `*pdwEffect` và `paths_from`.
-  - Kiểm chứng: rà từng khối, không còn `unsafe` thiếu `// SAFETY:`.
-- [ ] **A2. Watcher không bỏ sót sự kiện** — D
-  - `events.rs` consume event rồi bỏ qua khi đang tải; thêm cờ `dirty` và reload sau khi tải xong.
-  - Đổi active pane phải retarget watcher và reload pane đó.
-  - Test: ghi tệp trong lúc đang tải, sau khi tải xong danh sách phải có tệp mới.
-- [ ] **A3. `git diff --check` trong CI** — D
-  - Thêm bước vào `.github/workflows/ci.yml` cạnh bước Format.
-- [ ] **A4. Đồng bộ README với thực tế** — D
-  - README đang ghi 64 test, thiếu dual pane/undo/git/tags/pin; cập nhật lại.
-  - Thêm mục "Giới hạn đã biết" và ghi chú gỡ đăng ký (`unregister`).
+- [x] **A1. `// SAFETY:` cho `native_drop.rs`** — D
+  - 17 điểm `unsafe` đều có `// SAFETY:`; `paths_from` có khối `# Safety` riêng.
+- [x] **A2. Watcher không bỏ sót sự kiện** — D
+  - Thêm `App::watch_dirty`: sự kiện tới trong lúc đang tải được ghi nhớ và xếp lại sau.
+  - `panes::activate` nạp lại khung vừa kích hoạt vì watcher chỉ theo khung active.
+  - Test: `a_pending_watch_event_is_remembered_until_a_reload_is_queued`.
+- [x] **A3. Kiểm tra khoảng trắng trong CI** — D
+  - Bước `Diff hygiene` quét tệp văn bản đã track (bỏ qua png/ico/zip/exe).
+  - `git diff --check` trên checkout sạch luôn rỗng nên không dùng được.
+- [x] **A4. Đồng bộ README với thực tế** — D
+  - Số test, danh sách tính năng, kiến trúc, mục "Giới hạn đã biết".
+  - Hướng dẫn gỡ đăng ký khớp đúng bốn khoá `unregister` thật sự xoá.
 
 ---
 

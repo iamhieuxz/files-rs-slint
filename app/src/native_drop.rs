@@ -72,6 +72,16 @@ mod imp {
         }
     }
 
+    /// Đọc danh sách đường dẫn từ `CF_HDROP` của một `IDataObject`.
+    ///
+    /// # Safety
+    ///
+    /// `data_obj` phải là một `IDataObject` còn hiệu lực, và hàm phải được gọi
+    /// trên luồng đã khởi tạo OLE (luồng UI). `medium.u.hGlobal` là handle do
+    /// OLE cấp và chỉ được dùng trong hàm này: nó được `DragQueryFileW` đọc ngay
+    /// và `DragFinish` giải phóng trước khi trả về, nên không có handle nào sống
+    /// sót ra ngoài. Bộ đệm UTF-16 được cấp theo độ dài Windows báo, và chỉ đọc
+    /// `len` phần tử đầu.
     unsafe fn paths_from(data_obj: &IDataObject) -> Vec<PathBuf> {
         let format = FORMATETC {
             cfFormat: CF_HDROP.0,
@@ -80,18 +90,27 @@ mod imp {
             lindex: -1,
             tymed: TYMED_HGLOBAL.0 as u32,
         };
+        // SAFETY: `format` mô tả đúng clipboard format và sống qua lời gọi;
+        // `data_obj` do OLE bảo đảm còn hiệu lực trong suốt callback.
         let Ok(medium) = (unsafe { data_obj.GetData(&format) }) else {
             return Vec::new();
         };
         let hdrop = HDROP(medium.u.hGlobal.0 as _);
+        // SAFETY: `hdrop` là HDROP hợp lệ vừa lấy từ `GetData`; chỉ số
+        // `0xFFFF_FFFF` là quy ước "cho biết số tệp" của `DragQueryFileW`.
         let count = unsafe { DragQueryFileW(hdrop, 0xFFFF_FFFF, None) };
         let mut paths = Vec::with_capacity(count as usize);
         for index in 0..count {
+            // SAFETY: `index` nằm trong `0..count` mà Windows vừa trả về.
             let len = unsafe { DragQueryFileW(hdrop, index, None) } as usize;
             let mut buffer = vec![0u16; len + 1];
+            // SAFETY: bộ đệm dài `len + 1` phần tử, đúng độ dài Windows yêu cầu
+            // cho tên này; hàm ghi tối đa chừng ấy phần tử UTF-16.
             unsafe { DragQueryFileW(hdrop, index, Some(&mut buffer)) };
             paths.push(PathBuf::from(OsString::from_wide(&buffer[..len])));
         }
+        // SAFETY: giải phóng `hdrop` đúng một lần sau khi đã đọc xong; không
+        // dùng lại handle này ở bất kỳ đâu phía sau.
         unsafe { DragFinish(hdrop) };
         paths
     }
@@ -122,6 +141,8 @@ mod imp {
             if effect == DROPEFFECT_COPY {
                 self.show(pt);
             }
+            // SAFETY: OLE truyền `pdwEffect` trỏ tới bộ nhớ của nó, hợp lệ ghi
+            // trong suốt callback; ghi đúng một giá trị DROPEFFECT.
             unsafe { *pdwEffect = effect };
             Ok(())
         }
@@ -141,6 +162,7 @@ mod imp {
             if effect == DROPEFFECT_COPY {
                 self.show(pt);
             }
+            // SAFETY: như DragEnter — `pdwEffect` do OLE cấp cho callback này.
             unsafe { *pdwEffect = effect };
             Ok(())
         }
@@ -168,16 +190,19 @@ mod imp {
                 }
             }
             let Some(ui) = self.ui.upgrade() else {
+                // SAFETY: `pdwEffect` do OLE cấp cho callback này; ghi một giá trị.
                 unsafe { *pdwEffect = DROPEFFECT_NONE };
                 return Ok(());
             };
             match self.pointer(pt) {
                 Some((x, y)) if !paths.is_empty() => {
                     drag::native_drop(&ui, &self.app, paths, x, y);
+                    // SAFETY: như trên; thả được chấp nhận nên báo COPY.
                     unsafe { *pdwEffect = DROPEFFECT_COPY };
                 }
                 _ => {
                     drag::native_hide(&ui);
+                    // SAFETY: như trên; không có đích hợp lệ nên báo NONE.
                     unsafe { *pdwEffect = DROPEFFECT_NONE };
                 }
             }
@@ -191,8 +216,8 @@ mod imp {
         if already {
             return;
         }
-        // SAFETY: OLE được khởi tạo trên luồng UI; các handle còn sống trong
-        // suốt thời gian cửa sổ tồn tại.
+        // SAFETY: gọi trên luồng UI đã có cửa sổ; `hwnd` lấy từ chính cửa sổ
+        // đó. `RevokeDragDrop` trả lỗi nếu chưa từng đăng ký, nên bỏ qua an toàn.
         unsafe {
             if let Err(e) = OleInitialize(None) {
                 logging::write(&format!("OleInitialize lỗi: {e}"));
@@ -200,7 +225,8 @@ mod imp {
             let _ = RevokeDragDrop(hwnd);
         }
         let target: IDropTarget = DropTarget::new(hwnd, ui.as_weak(), app.clone()).into();
-        // SAFETY: target giữ refcount; thêm vào TARGETS để sống bằng cửa sổ.
+        // SAFETY: `target` là COM object đã AddRef qua `into()`; `hwnd` hợp lệ.
+        // Tham chiếu được giữ trong `TARGETS` bên dưới nên sống bằng cửa sổ.
         match unsafe { RegisterDragDrop(hwnd, &target) } {
             Ok(()) => {
                 logging::write(&format!("đăng ký nhận tệp kéo-thả: hwnd={:?}", hwnd.0));

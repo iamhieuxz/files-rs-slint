@@ -1,4 +1,4 @@
-﻿//! Rendering the list and status bar from the current state.
+//! Rendering the list and status bar from the current state.
 //!
 //! Everything here is "state in, pixels out": it reads [`App`] and pushes plain
 //! values into the Slint model. No file operations and no navigation live in this
@@ -470,6 +470,7 @@ mod tests {
             results,
             watch: None,
             watched_path: None,
+            watch_dirty: false,
             closed_tabs: Vec::new(),
             show_extensions: true,
             folders_first: true,

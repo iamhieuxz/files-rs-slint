@@ -49,6 +49,16 @@ pub fn activate(ui: &AppWindow, app: &Rc<RefCell<App>>, pane: Pane) {
     push_chrome(ui, app);
     push_status(ui, app);
     show_preview(ui, app);
+    // Watcher chỉ theo khung active, nên thay đổi xảy ra trong lúc khung kia
+    // nhận lệnh không được ghi nhận. Nạp lại khung vừa kích hoạt để không hiện
+    // trạng thái cũ; một lần đọc thư mục là rẻ so với dữ liệu sai.
+    let in_flight = app.borrow().pane_load(pane).in_flight;
+    if !in_flight {
+        // Cờ dirty của watcher cũ không còn nghĩa: `retarget_watch` đã trỏ
+        // sang thư mục của khung mới.
+        app.borrow_mut().watch_dirty = false;
+        reload_pane(ui, app, pane);
+    }
 }
 
 /// Toggle the second pane. Enabling keeps the left pane active and loads the

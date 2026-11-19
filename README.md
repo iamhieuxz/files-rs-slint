@@ -20,7 +20,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Hiện có 248 test. Checklist thủ công trước phát hành: `docs/manual-test.md`.
+Hiện có 249 test. Checklist thủ công trước phát hành: `docs/manual-test.md`.
 
 ## Kiến trúc
 
@@ -96,18 +96,24 @@ trong khoảng 400 ms.
 
 ## Gỡ đăng ký trình duyệt mặc định
 
-Nếu đã bấm "Đặt làm trình duyệt tệp mặc định", gỡ bằng cách xoá các khoá mà app
-đã tạo trong `HKCU`:
+`unregister` trong `files-fs/src/assoc.rs` xoá đúng bốn khoá dưới `HKCU` và một
+giá trị trong `RegisteredApplications`. Chạy tương đương bằng PowerShell:
 
 ```powershell
-Remove-Item -Recurse -Force 'HKCU:\Software\Classes\FilesRS.Folder' -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force 'HKCU:\Software\Classes\FilesRS.Folder\shell' -ErrorAction SilentlyContinue
-(Get-Item 'HKCU:\Software\RegisteredApplications').GetValueNames() |
-  Where-Object { $_ -eq 'FilesRS' } |
-  ForEach-Object { Remove-ItemProperty 'HKCU:\Software\RegisteredApplications' -Name $_ }
+$keys = @(
+  'HKCU:\Software\Classes\FilesRS.Folder',
+  'HKCU:\Software\Classes\FilesRS.Drive',
+  'HKCU:\Software\Classes\Applications\FilesRS.exe',
+  'HKCU:\Software\FilesRS'
+)
+foreach ($k in $keys) {
+  if (Test-Path $k) { Remove-Item -Recurse -Force $k }
+}
+Remove-ItemProperty -Path 'HKCU:\Software\RegisteredApplications' -Name 'FilesRS' -ErrorAction SilentlyContinue
 ```
 
-Sau đó mở `ms-settings:defaultapps` để Windows cập nhật danh sách.
+Sau đó mở `ms-settings:defaultapps` để Windows cập nhật danh sách. Không cần
+khởi động lại máy.
 
 ## Lộ trình
 

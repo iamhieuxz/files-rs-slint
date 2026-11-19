@@ -1,4 +1,4 @@
-﻿//! Application state.
+//! Application state.
 //!
 //! Two structures: [`Tab`] owns everything one tab is looking at, [`App`] owns
 //! the tabs and the process-wide choices (theme, panels, clipboard, tag store).
@@ -169,6 +169,9 @@ pub struct App {
     /// Paths whose change should trigger a refresh, from the directory watcher.
     pub watch: Option<files_fs::WatchHandle>,
     pub watched_path: Option<PathBuf>,
+    /// Một sự kiện của watcher tới trong lúc đang tải, chờ lần làm mới kế tiếp.
+    /// Bỏ qua mà không ghi nhớ là mất thay đổi của người dùng.
+    pub watch_dirty: bool,
     /// Tabs the user closed, newest last. `Ctrl+Shift+T` pops from here, which
     /// is what Files and every browser do — the path alone is enough to restore.
     pub closed_tabs: Vec<PathBuf>,
@@ -424,6 +427,60 @@ mod tests {
         tab.rebuild_visible();
         tab.selection = vec![1];
         assert_eq!(tab.selected_paths(), vec![PathBuf::from("C:\\b.txt")]);
+    }
+
+    #[test]
+    fn a_pending_watch_event_is_remembered_until_a_reload_is_queued() {
+        // Watcher có thể báo thay đổi trong lúc đang tải. Nếu cờ này bị bỏ qua,
+        // danh sách hiện trạng thái cũ cho tới lần làm mới sau.
+        let mut app = test_app();
+        assert!(!app.watch_dirty, "mới mở thì không có sự kiện nào chờ");
+
+        app.watch_dirty = true;
+        assert!(app.watch_dirty);
+
+        // Xếp được một lần đọc thì cờ phải được xoá để không lặp vô hạn.
+        app.watch_dirty = false;
+        assert!(!app.watch_dirty);
+    }
+
+    /// `App` tối thiểu cho test: chỉ các trường mà test này chạm tới.
+    fn test_app() -> App {
+        let (worker, results) = crate::ops_worker::Worker::spawn().expect("worker cho test");
+        App {
+            tabs: vec![Tab::new(PathBuf::from("C:\\"))],
+            active: 0,
+            right: None,
+            active_pane: Pane::Left,
+            loads: Default::default(),
+            next_load_token: 1,
+            show_hidden: false,
+            show_sidebar: true,
+            show_preview: true,
+            view_mode: 0,
+            dark: false,
+            clipboard: Vec::new(),
+            clipboard_cut: false,
+            grid_width: 900.0,
+            right_grid_width: 900.0,
+            worker,
+            results,
+            watch: None,
+            watched_path: None,
+            watch_dirty: false,
+            closed_tabs: Vec::new(),
+            show_extensions: true,
+            folders_first: true,
+            tags: tags::TagStore::default(),
+            tag_path: PathBuf::from("C:\\t.json"),
+            settings: settings::Settings::default(),
+            settings_path: PathBuf::from("C:\\s.json"),
+            undo: Default::default(),
+            git_status: Default::default(),
+            open_with: Vec::new(),
+            operation_started: None,
+            drag: Default::default(),
+        }
     }
 
     fn entry(name: &str) -> Entry {
