@@ -1371,14 +1371,14 @@ dependencies = [
 
 [[package]]
 name = "files-core"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "files-fs"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "files-core",
  "md5",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "files-rs-app"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "chrono",
  "files-core",

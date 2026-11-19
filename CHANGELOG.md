@@ -7,8 +7,47 @@ Mọi thay đổi đáng chú ý của dự án được ghi ở đây. Định 
 ## [Chưa phát hành]
 
 ### Sẽ làm
-- Duyệt và khôi phục Thùng rác (giai đoạn B, đang hoãn).
-- Kéo tab đổi thứ tự, chia pane ngang/dọc, compact overlay (giai đoạn E).
+- Giai đoạn E: kéo tab đổi thứ tự, chia pane ngang/dọc.
+- Giai đoạn F: tạo shortcut `.lnk`, gom mục đã chọn vào thư mục, làm phẳng thư mục.
+
+## [3.0.0] — 2026-11-20
+
+Bản này mở được Thùng rác. Trước đây app chỉ **xoá vào** Thùng rác mà không
+duyệt hay khôi phục được.
+
+### Thêm
+- **Duyệt Thùng rác** (`open-recycle-bin`): mục ở sidebar, tab riêng, cột ngày
+  hiện thời điểm xoá. Đọc trực tiếp `$RECYCLE.BIN` thay vì Shell, vì
+  `IShellFolder` trả `S_OK` mà không trả mục nào trên bản Windows này.
+- **Khôi phục từng mục** (`restore-from-recycle-bin`): chuyển nội dung về đúng
+  đường dẫn gốc. Từ chối ghi đè đích, tạo thư mục cha nếu thiếu, fallback
+  copy-rồi-xoá khi khác ổ.
+- **Khôi phục tất cả** (`restore-all-from-recycle-bin`): hỏi xác nhận, bỏ qua mục
+  có đích trùng tên và báo riêng số bỏ qua.
+- **Làm rỗng Thùng rác** trong menu ngữ cảnh khi đang ở Thùng rác.
+- **Nhóm theo ngày xoá** và **theo thư mục gốc** — hai tiêu chí chỉ hiện trong
+  Thùng rác.
+- **Sao chép đường dẫn có ngoặc kép** (`F5`) — dán an toàn vào `cmd`.
+- **Mở thư mục chứa mục đang chọn** (`F6`).
+- **Xoay ảnh 90° sang trái** (`F9`), bổ sung cho chiều phải đã có.
+- **Toàn màn hình F11** (`E5`), bật/tắt không viền.
+
+### Sửa
+- **Thanh trạng thái và panel xem trước giữ dữ liệu tab cũ**: `push_view` không
+  gọi `push_status` và không xoá preview. Mở Thùng rác xong vẫn thấy "57 thư
+  mục, 74 tệp" của thư mục trước.
+- **Job đọc thư mục cũ ghi đè danh sách Thùng rác**: mở Thùng rác vài giây sau
+  hiện "Path does not exist" kèm số mục của thư mục trước. `apply_listing` giờ
+  bỏ qua kết quả khi tab đang ở Thùng rác.
+- **Đường dẫn 8.3 làm mất dữ liệu khi xoá**: `SHFileOperationW` trả `rc = 0` mà
+  không tạo tệp `$I` khi nhận đường dẫn dạng `C:\Users\IAMHIE~1\...`. Đổi sang
+  đường dẫn dài qua `GetLongPathNameW` trước khi gọi Shell.
+
+### Đã biết
+- Khôi phục chưa được kiểm chứng end-to-end trên máy thật: môi trường phát triển
+  bị sandbox chặn ghi `$Recycle.Bin`. Test tự động đánh dấu `#[ignore]`.
+- Checkbox từng dòng vẫn chưa có `TogglePattern` qua UIA (giới hạn Slint 1.19).
+- Nhóm theo tiêu chí chưa được lưu vào `settings.json`.
 
 ## [2.2.0] — 2026-11-19
 
