@@ -4,8 +4,8 @@
 //! what the user sees are verified here.
 
 use files_core::entry::{Entry, EntryKind};
-use files_core::sort::{filter, natural_cmp, ListOptions, SortBy, SortDirection, SortSpec};
 use files_core::path::{breadcrumbs, normalize};
+use files_core::sort::{filter, natural_cmp, ListOptions, SortBy, SortDirection, SortSpec};
 use std::cmp::Ordering;
 use std::path::Path;
 
@@ -34,7 +34,11 @@ fn natural_order_puts_file2_before_file10() {
 
 #[test]
 fn natural_order_is_case_insensitive_but_not_ambiguous() {
-    assert_eq!(natural_cmp("Apple", "apple"), Ordering::Less, "case breaks the tie");
+    assert_eq!(
+        natural_cmp("Apple", "apple"),
+        Ordering::Less,
+        "case breaks the tie"
+    );
     assert_eq!(natural_cmp("alpha", "BETA"), Ordering::Less);
 }
 
@@ -63,7 +67,10 @@ fn folders_first_can_be_disabled() {
         entry("aaa.txt", EntryKind::File, Some(1)),
         entry("zzz", EntryKind::Directory, None),
     ];
-    let spec = SortSpec { folders_first: false, ..Default::default() };
+    let spec = SortSpec {
+        folders_first: false,
+        ..Default::default()
+    };
     spec.sort(&mut rows);
     assert_eq!(rows[0].name, "aaa.txt", "pure name order when disabled");
 }
@@ -76,7 +83,11 @@ fn size_sort_puts_directories_last_and_orders_ascending() {
         entry("small.txt", EntryKind::File, Some(5)),
     ];
     // folders_first off so the size column is the only ordering.
-    let spec = SortSpec { by: SortBy::Size, folders_first: false, ..Default::default() };
+    let spec = SortSpec {
+        by: SortBy::Size,
+        folders_first: false,
+        ..Default::default()
+    };
     spec.sort(&mut rows);
     assert_eq!(rows[0].name, "small.txt");
     assert_eq!(rows[1].name, "big.bin");
@@ -108,7 +119,11 @@ fn sort_is_deterministic_for_equal_keys() {
             entry("a.txt", EntryKind::File, Some(7)),
         ]
     };
-    let spec = SortSpec { by: SortBy::Size, folders_first: false, ..Default::default() };
+    let spec = SortSpec {
+        by: SortBy::Size,
+        folders_first: false,
+        ..Default::default()
+    };
     let mut first = make();
     let mut second = make();
     spec.sort(&mut first);
@@ -127,7 +142,13 @@ fn hidden_filter_drops_flagged_entries() {
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].name, "visible.txt");
 
-    let all = filter(rows, &ListOptions { show_hidden: true, show_dotfiles: true });
+    let all = filter(
+        rows,
+        &ListOptions {
+            show_hidden: true,
+            show_dotfiles: true,
+        },
+    );
     assert_eq!(all.len(), 2);
 }
 
@@ -137,7 +158,13 @@ fn dotfiles_are_filtered_independently_of_the_hidden_flag() {
         entry(".gitignore", EntryKind::File, Some(1)),
         entry("main.rs", EntryKind::File, Some(1)),
     ];
-    let shown = filter(rows.clone(), &ListOptions { show_hidden: true, show_dotfiles: false });
+    let shown = filter(
+        rows.clone(),
+        &ListOptions {
+            show_hidden: true,
+            show_dotfiles: false,
+        },
+    );
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].name, "main.rs");
 }

@@ -14,9 +14,9 @@ Số liệu dưới đây lấy từ quét tĩnh mã nguồn, chưa chạy build
 | `unwrap()` / `expect()` trong code production (đã xác minh) | 4: `ops_worker.rs` 2 (`expect` khi tạo luồng), `sort.rs` 2 (`unwrap` sau `peek`, bất biến đã đảm bảo). 42 chỗ còn lại nằm trong `#[cfg(test)]` |
 | Khối `unsafe` | 8 (window.rs 4, assoc.rs 4) |
 | Thuộc tính accessibility trong Slint | 0 |
-| Test (đã chạy `cargo test --workspace`) | 69 test app đều pass; tổng cộng 116 test pass, 0 hỏng |
+| Test (đã chạy `cargo test --workspace`, đo lại 2026-11-18) | 228 test pass, 0 hỏng (app 113, files-fs 53 lib+tích hợp, files-core 13+; xem nhật ký) |
 | Build release (đã đo) | `files-rs.exe` ~19,9 MB, build thành công |
-| Clippy | Chưa ghi nhận cảnh báo (lệnh chạy không in ra kết quả lỗi, cần chạy lại để đếm chính xác) |
+| Clippy | 0 cảnh báo, 0 lỗi (`cargo clippy --workspace --all-targets`, đo 2026-11-18) |
 | CI, CHANGELOG, `docs/manual-test.md` | Chưa có (đã kiểm tra) |
 | Bản gốc Files (C#) | ~173 file action, ~85 ViewModel, ~94 XAML |
 
@@ -128,11 +128,11 @@ Hiện trạng đã kiểm chứng: không có chức năng hoàn tác nào (kh�
 
 ### 5.3 Kéo-thả
 
-Hiện trạng: chỉ có kéo cửa sổ (`window.rs`, `window-drag`). Chưa có kéo-thả tệp.
+Hiện trạng: đã có kéo-thả nội bộ giữa hai khung, kéo từ ứng dụng ngoài bằng OLE, ghost và vùng thả; kéo cửa sổ vẫn ở `window.rs`.
 
-- [ ] **5.3.1** Kéo tệp trong cùng cửa sổ để di chuyển hoặc sao chép (Ctrl để sao chép).
-- [ ] **5.3.2** Thả tệp từ Explorer vào danh sách hoặc vào sidebar.
-- [ ] **5.3.3** Hiển thị con trỏ và vùng thả khi kéo.
+- [x] **5.3.1** Kéo tệp trong cùng cửa sổ để di chuyển hoặc sao chép (Ctrl để sao chép). (Kéo giữa hai khung; mặc định di chuyển, Ctrl sao chép. Đã kiểm chứng cả hai: kéo `hello.txt` sang khung phải và Ctrl-kéo để cả hai bản còn nguyên.)
+- [x] **5.3.2** Thả tệp từ Explorer vào danh sách hoặc vào sidebar. (OLE `IDropTarget` + `CF_HDROP` trên HWND của Slint, không cần winit hỗ trợ. Đã kiểm chứng bằng nguồn kéo `FileDrop` bên ngoài: thả vào pane và vào mục sidebar đều sao chép đúng thư mục.)
+- [x] **5.3.3** Hiển thị con trỏ và vùng thả khi kéo. (Ghost "Di chuyển/Sao chép N mục", viền/nền accent trên pane đích, highlight mục sidebar, con trỏ move/copy/no-drop. Đã chụp ảnh trong lúc kéo.)
 
 ### 5.4 Accessibility
 
@@ -144,7 +144,7 @@ Hiện trạng: chỉ có kéo cửa sổ (`window.rs`, `window-drag`). Chưa c�
 ### 5.5 Thông báo lỗi và phản hồi
 
 - [x] **5.5.1** Thông báo khi thiếu quyền (`Access is denied`) có gợi ý chạy lại với quyền quản trị. (`format::explain_error` đổi sang câu hành động được: nêu cả hai lựa chọn (thư mục khác, hoặc Run as administrator) kèm chi tiết gốc. Có test riêng.)
-- [x] **5.5.2** Thông báo thành công ngắn (ví dụ "Đã chuyển 3 mục") tự ẩn sau vài giây. (`install_status_clear`: thông báo thành công tự xoá sau ~4 giây (nhịp 500 ms × 8). Đếm theo nội dung nên thông báo mới không bị xoá sớm.)
+- [x] **5.5.2** Thông báo thành công ngắn (ví dụ "Đã chuyển 3 mục") tự ẩn sau vài giây. (`install_status_clear`: thông báo nằm ở property `status-message` **riêng**, tự xoá sau ~4 giây; `push_status` chỉ còn cập nhật số mục đã chọn nên không xoá mất thông báo khi danh sách vẽ lại.)
 - [x] **5.5.3** Trạng thái rỗng: thư mục trống hiển thị thông báo thay vì khoảng trắng. (Trạng thái rỗng: icon + 'Thư mục này trống' + gợi ý kéo tệp hoặc dùng nút Mới; chỉ hiện khi không có dòng nào, không đang tải, và không có lỗi.)
 
 ---
@@ -153,16 +153,16 @@ Hiện trạng: chỉ có kéo cửa sổ (`window.rs`, `window-drag`). Chưa c�
 
 Sắp xếp theo giá trị với người dùng và độ phức tạp tăng dần.
 
-- [x] **6.1** Thumbnail ảnh trong danh sách, có cache trên đĩa, tạo ở luồng nền, giới hạn kích thước cache. (Đã kiểm chứng: không có từ khoá `thumbnail` trong mã.) (`files-fs::thumbnail` qua WIC, giữ tỉ lệ, cạnh dài 48 px trong danh sách. Chỉ tệp ảnh được hỏi (một thư mục 5000 tệp văn bản không sinh 5000 lời gọi). Chạy ở luồng nền, kết quả điền vào ô icon. **Kiểm chứng**: 200×100 → 48×24, 100×200 → 24×48, tệp .txt → không có ảnh thu nhỏ. 3 test.)
-- [x] **6.2** Tìm kiếm trong thư mục hiện tại (không đệ quy), đã có lọc nhanh. Thêm tuỳ chọn tìm đệ quy có giới hạn độ sâu và có thể huỷ. (Tìm đệ quy `files-fs::search`: giới hạn độ sâu (8) và số kết quả (500), huỷ được, **không đi vào junction/symlink** (tránh vòng lặp vô hạn), bỏ qua thư mục không đọc được thay vì dừng. Ctrl+Shift+F. 7 test.)
+- [~] **6.1** Thumbnail ảnh trong danh sách, có cache trên đĩa, tạo ở luồng nền, giới hạn kích thước cache. (**Một phần**: thumbnail WIC giữ tỉ lệ, cạnh dài 48 px; chỉ tệp ảnh được hỏi; đã chuyển sang luồng aux `files-bg` để không chặn thao tác tệp; lỗi giải mã im lặng, không còn gây vòng lặp reload. **Chưa làm**: cache đĩa và giới hạn dung lượng cache.)
+- [x] **6.2** Tìm kiếm trong thư mục hiện tại (không đệ quy), đã có lọc nhanh. Thêm tuỳ chọn tìm đệ quy có giới hạn độ sâu và có thể huỷ. (Tìm đệ quy `files-fs::search`: giới hạn độ sâu (8) và số kết quả (500), **không đi vào junction/symlink** (tránh vòng lặp vô hạn), bỏ qua thư mục không đọc được thay vì dừng. Ctrl+Shift+F. 7 test. Nút **Huỷ** hoạt động nhờ tiến trình không xác định (`Progress::begin_indeterminate`) trong lúc quét.)
 - [x] **6.3** Hiển thị đường dẫn đầy đủ khi rê chuột lên breadcrumb. (Tooltip đường dẫn đầy đủ khi rê chuột lên breadcrumb. Slint 1.19 **không export `TooltipArea`** nên phải tự vẽ lớp phủ (kiểm tra: `std-widgets.slint` báo 'No exported type called TooltipArea').)
 - [x] **6.4** Ghim thư mục vào sidebar (lưu trong settings). Lưu ý: từ "pin" trong mã chủ yếu là các mục `pin:` của Command Palette và màu thẻ, chưa có ghim sidebar thật. (Ghim thư mục vào sidebar: `settings.pinned_folders` (lưu bền), mục menu đổi nhãn theo trạng thái, có trong Command Palette. Ghim của người dùng đứng trước mục mặc định. 2 test.)
 - [x] **6.5** Xoay ảnh (90°, lưu lại). (`files-fs::rotate_image_clockwise` qua WIC (JPEG/PNG/BMP/GIF/TIFF). Ghi ra tệp tạm rồi `rename` để không bao giờ để lại tệp dở. Có hộp thoại xác nhận vì ghi đè tệp gốc. **Đã kiểm chứng**: PNG 4×2 xoay thành 2×4. Ba lỗi WIC thật đã gặp và sửa: `IWICStream` chưa khởi tạo (dùng `SHCreateMemStream`), thiếu `SetSize` trên khung, và phải `Commit` khung trước encoder.)
 - [x] **6.6** Mở tệp `.lnk` và hiển thị đích của shortcut. (`files-fs::shortcut_target` đọc đích qua `IShellLinkW` + `IPersistFile`. Hiện trong bảng thuộc tính với nhãn 'Trỏ tới'. **Đã kiểm chứng** bằng shortcut thật do PowerShell tạo: đọc đúng đường dẫn đích. Tệp không phải shortcut trả `None` thay vì panic.)
-- [~] **6.7** Trình duyệt Thùng rác (xem, khôi phục, làm rỗng). (**Một phần, có ghi rõ**: làm rỗng Thùng rác qua `SHFileOperationW` (có hộp thoại xác nhận, có trong Command Palette). **Duyệt và khôi phục từng mục chưa làm**: `SHGetKnownFolderPath(FOLDERID_RecycleBinFolder)` trả E_FAIL trên máy này, nên đường dẫn tới Thùng rác không lấy được; duyệt đúng cách cần `IShellFolder` enumeration + `IContextMenu` verb để khôi phục — lớn hơn phần còn lại của module. `can_browse()`/`can_restore()` trả `false` để UI không hiện nút chết. 2 test khẳng định tính trung thực này.)
+- [~] **6.7** Trình duyệt Thùng rác (xem, khôi phục, làm rỗng). (**Một phần**: làm rỗng Thùng rác dùng `SHEmptyRecycleBinW` (có hộp thoại xác nhận, có trong Command Palette). Bản trước gọi `bin_path()` vốn luôn trả lỗi nên nút này thực ra chết; đã sửa. **Duyệt và khôi phục từng mục chưa làm**: cần `IShellFolder` enumeration + `IContextMenu` verb; `can_browse()`/`can_restore()` trả `false` để UI không hiện nút chết. 2 test khẳng định tính trung thực này.)
 - [x] **6.8** Nhiều cửa sổ (mỗi cửa sổ có tab riêng). (`windows.rs`: mỗi cửa sổ một `AppWindow` + một `App` riêng (tab, clipboard, lịch sử, worker, watcher riêng). Cửa sổ giữ trong danh sách `thread_local` để không bị drop; đóng thì dọn khỏi danh sách và ẩn tường minh. Đóng đúng cửa sổ bằng so sánh con trỏ `Rc` của `App`, không đoán. `main()` rút xuống còn 20 dòng: gọi `windows::open` rồi `run_event_loop`. Lệnh 'Cửa sổ mới' (Ctrl+N) trong palette. 4 test, gồm test xác nhận cửa sổ mới thật sự nằm trong danh sách.)
-- [ ] **6.9** Dual pane (hai khung cạnh nhau, kéo-thả giữa hai khung).
-- [x] **6.10** Git status trong danh sách (chỉ đọc, không cần thư viện nặng ngay). (`files-fs::gitstatus` đọc `git status --porcelain=v1 -z`, không cần thư viện Git. Cột chữ cái (U/M/S/D/!) trước cột kích thước, màu theo quy ước git. Chỉ gọi `git` khi thư mục nằm trong repo (`repo_root` dò `.git`). **Hai lỗi thật đã gặp và sửa**: (1) `--no-optional-locks` là option TOÀN CỤC nên phải đứng trước `status`, đặt sau thì git báo 'unknown option' và tính năng im lặng không chạy; (2) `git status` trả đường dẫn tương đối theo repo root. 13 test đơn vị + 3 test tích hợp trên repo thật.)
+- [x] **6.9** Dual pane (hai khung cạnh nhau, kéo-thả giữa hai khung). (Hai khung rộng bằng nhau, mỗi khung có tab/selection/sort/load token riêng; khung phải một tab, cột gọn Tên/Ngày sửa/Kích thước, dùng chung view mode; watcher vẫn theo khung active. Thanh đường dẫn đôi, click để đổi khung nhận lệnh. Đã kiểm chứng điều hướng độc lập, kéo-thả move/copy và thả từ ngoài vào pane/sidebar.)
+- [x] **6.10** Git status trong danh sách (chỉ đọc, không cần thư viện nặng ngay). (`files-fs::gitstatus` đọc `git status --porcelain=v1 -z`, không cần thư viện Git. Cột chữ cái (U/M/S/D/!) trước cột kích thước, màu theo quy ước git. Chỉ gọi `git` khi thư mục nằm trong repo (`repo_root` dò `.git`). **Lỗi đã sửa**: (1) `--no-optional-locks` là option TOÀN CỤC nên phải đứng trước `status`; (2) `git status` trả đường dẫn tương đối theo **gốc repo**, nên phải ghép với `repo_root(dir)` chứ không phải thư mục đang xem — trước đây thư mục con bị `sub/sub/...` và cột luôn trống. Có test tích hợp cho thư mục con. 13 test đơn vị + 4 test tích hợp.)
 
 Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, cloud drive, format ổ đĩa, đặt hình nền.
 
@@ -170,21 +170,77 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 
 ## Giai đoạn 7: Kiểm thử và chất lượng
 
-- [ ] **7.1** Test tích hợp `files-fs` trên thư mục tạm: tạo, đổi tên, copy, move, xoá, nén, giải nén.
-- [ ] **7.2** Test giới hạn của zip-slip với tệp zip độc hại (đường dẫn `../`, đường dẫn tuyệt đối).
-- [ ] **7.3** Test hiệu năng: liệt kê thư mục 10.000 tệp, sắp xếp, và thời gian phản hồi UI.
-- [ ] **7.4** Test thủ công có checklist, lưu tại `docs/manual-test.md`: chạy trước mỗi bản phát hành.
-- [ ] **7.5** Theo dõi số dòng từng module trong CI, cảnh báo khi vượt ~800 dòng.
+- [x] **7.1** Test tích hợp `files-fs` trên thư mục tạm: tạo, đổi tên, copy, move, xoá, nén, giải nén. (`tests/workflow.rs`: một luồng đầy đủ, kiểm tra nội dung và trạng thái sau từng bước.)
+- [x] **7.2** Test giới hạn của zip-slip với tệp zip độc hại (đường dẫn `../`, đường dẫn tuyệt đối). (`extraction_rejects_entries_that_escape_the_target`: `../escape.txt` bị bỏ, `/absolute.txt` bị bỏ; chỉ tệp hợp lệ được ghi.)
+- [x] **7.3** Test hiệu năng: liệt kê thư mục 10.000 tệp, sắp xếp, và thời gian phản hồi UI. (`tests/perf.rs`: 10.000 tệp + 100 thư mục, sắp xếp trong ~1,1 giây, ngưỡng 10 giây; phản hồi UI kiểm tra thủ công theo checklist.)
+- [x] **7.4** Test thủ công có checklist, lưu tại `docs/manual-test.md`: chạy trước mỗi bản phát hành.
+- [x] **7.5** Theo dõi số dòng từng module trong CI, cảnh báo khi vượt ~800 dòng. (`scripts/check-module-size.ps1` + bước CI `pwsh`; chỉ cảnh báo, không chặn merge.)
 
 ---
 
 ## Giai đoạn 8: Phát hành
 
-- [ ] **8.1** Đặt phiên bản theo SemVer, ghi CHANGELOG.md.
-- [ ] **8.2** Đóng gói: kiểm tra manifest, icon, quyền `highestAvailable`.
+- [~] **8.1** Đặt phiên bản theo SemVer, ghi CHANGELOG.md. (Đã đặt workspace **2.0.0**, VERSIONINFO `2.0.0.0`; chưa viết CHANGELOG.md.)
+- [x] **8.2** Đóng gói: kiểm tra manifest, icon, quyền `highestAvailable`. (Bản portable **2.0.0** tại `Desktop\Files RS 2.0\Files RS.exe`; icon + manifest nhúng, FileVersion/ProductVersion `2.0.0.0`. Bản 1.0 cũ vẫn giữ nguyên, không xoá.)
 - [ ] **8.3** Ghi chú về cách gỡ đăng ký trình duyệt mặc định (`unregister`) trong README.
 
 ---
+
+## Giai đoạn 9: Sửa lỗi phát hiện khi review
+
+Các mục dưới đây là lỗi thật gặp khi đối chiếu mã với các tick ở trên. Đánh dấu `[x]` sau khi có test hồi quy và toàn bộ workspace xanh.
+
+- [x] **9.1** Dán "Thay thế" vào chính thư mục nguồn xoá mất tệp gốc. (`same_entry` chặn `dest == source`, trả lỗi `same_path`; 2 test.)
+- [x] **9.2** Nén ZIP ghi đè archive cũ hoặc chính tệp .zip đang chọn. (`create_zip` từ chối đích đã tồn tại; UI chọn tên trống qua `free_path`; 3 test.)
+- [x] **9.3** Thumbnail lỗi làm reload thư mục vô hạn và chặn hàng đợi thao tác. (Chuyển sang `AuxJob`; lỗi im lặng; 3 test.)
+- [x] **9.4** Nút "Làm rỗng Thùng rác" luôn lỗi. (Dùng `SHEmptyRecycleBinW`; xác nhận UI giữ nguyên.)
+- [x] **9.5** Sáu lệnh Command Palette không có nhánh xử lý. (Bổ sung nhánh, gom logic nút/palette/menu về một hàm; test phủ mọi id palette.)
+- [x] **9.6** Git status sai trong thư mục con. (Ghép path với `repo_root`; test tích hợp.)
+- [x] **9.7** Tìm kiếm đệ quy không huỷ được từ UI. (`Progress::begin_indeterminate`; test.)
+- [x] **9.8** Thông báo thành công bị `push_status` xoá ngay. (Property `status-message` riêng.)
+- [x] **9.9** Menu thẻ panic khi tags.json có ít hơn 4 thẻ. (`tag_menu_items` + test.)
+- [x] **9.10** Ctrl+N / Ctrl+Shift+N không hoạt động; FluentButton thiếu nhãn accessibility. (Slint trả `event.text` chữ hoa khi giữ Shift nên mọi tổ hợp Ctrl+Shift+… đều câm; đã chuẩn hoá về chữ thường. Thêm `accessible-role`/`label`/`enabled` + `accessible-action-default` cho FluentButton và các control để UIA bấm được, không chỉ đọc tên. Escape trong ô nhập tự đóng palette/filter/dialog và trả focus về `key-root`; đã kiểm chứng bằng Windows UI Automation: mở/đóng dialog, mở/đóng palette, gọi nút Huỷ qua InvokePattern.)
+- [x] **9.11** Batch lỗi một phần không hoàn tác được, cặp (nguồn, đích) bị lệch. (`run_batch` trả cặp; ghi undo cả khi lỗi; test.)
+- [x] **9.12** Tooltip đường dẫn đầy đủ ở breadcrumb (tick 6.3 hiện chưa đúng). (Lớp phủ nằm cuối vùng nội dung để vẽ trên danh sách; vùng hover phủ đúng cả breadcrumb. **Đã kiểm chứng** bằng rê chuột thật + chụp màn hình và UIA đọc được `C:\Users\iamhieuxz`.)
+- [x] **9.13** Hoàn tác/làm lại đang chạy I/O đồng bộ trên UI thread. (`Job::Undo`/`Job::Redo` + `JobDone::UndoDone`; UI chỉ dời action giữa hai ngăn xếp khi worker báo thành công. 2 test trên đĩa.)
+- [x] **9.14** Lưới dùng `grid_width` cứng 900 px, không co giãn theo cửa sổ. (Callback `grid-width-changed`; chỉ dựng lại khi số cột đổi; **đã kiểm chứng** 5 cột ở cửa sổ rộng và 1 cột khi thu hẹp.)
+- [x] **9.15** Nhiều cửa sổ ghi đè settings/tags của nhau (last-writer-wins). (`with_ui_from`/`with_pins_from`: lưu UI giữ ghim từ đĩa, lưu ghim giữ UI từ đĩa; tag đọc bản mới nhất trước khi sửa. 3 test.)
+- [x] **9.16** Cache đĩa + giới hạn dung lượng cho thumbnail. (Cache `%LOCALAPPDATA%\FilesRS\thumbcache`, key theo path+mtime+size, ghi nguyên tử, giới hạn 64 MB, dọn mỗi 32 lần ghi. 5 test, gồm test cache hit khi nguồn đã hỏng.)
+- [x] **9.17** `directory_size` đi theo junction/symlink, có thể lặp vô hạn. (Dùng chung `is_reparse_point` với search; test junction trỏ về thư mục cha.)
+
+## Giai đoạn 10: Căn chỉnh giao diện theo Files
+
+- [x] **10.1** Gộp title bar + tab, bỏ tên app; tab icon + chữ bám trái, tab vừa nội dung.
+- [x] **10.2** Nút cửa sổ 46×32 đúng glyph (minimize/maximize/restore/close), hover, accessibility; kéo title bar hoạt động.
+- [x] **10.3** Address bar trước command bar; command bar nằm trong pane nội dung (sau sidebar); search tách nhóm; panel toggles chuyển sang command bar.
+- [x] **10.4** Hợp nhất bề mặt tối, divider sidebar, active tab token riêng, thêm cột "Thẻ".
+- [~] **10.5** Sidebar nhóm Home / Pinned / Drives / Settings như Files. (**Một phần**: header "Ổ đĩa" có chevron thu gọn, icon màn hình xanh cho ổ hệ thống, icon ổ cứng cho ổ dữ liệu, footer "Cài đặt". Chưa tách Home/Pinned/Cloud/Network.)
+- [~] **10.6** Checkbox chọn nhiều + pill thẻ trong danh sách. (Cột "Thẻ" đã có; checkbox chọn nhiều và pill màu chưa làm.)
+- [~] **10.7** Preview/gallery pane bố cục giống Files. (Preview cùng bề rộng 240 với sidebar và cùng bề mặt, có divider; chưa phải gallery ảnh.)
+- [~] **10.8** Cân lại mật độ hàng và typography (row 40px, metadata 12px). (Row 38px, icon–chữ 12px, header indent khớp tên; có thể tinh chỉnh thêm.)
+
+## Giai đoạn 11: Cột động và resize cửa sổ
+
+- [x] **11.1** Model cột trong settings: thứ tự + bề rộng, kẹp min/max, sửa file hỏng, test roundtrip.
+- [x] **11.2** Header/rows lặp theo `column-order`; kéo biên để đổi rộng, kéo header ngang để đổi thứ tự một bậc; click header vẫn sort. Vạch chia full-height ở mọi biên cột; vùng neo 11px có hover accent, viền 2px và cursor ↔ khi kéo.
+- [x] **11.3** Lưu layout cột sau mỗi lần kéo và khôi phục khi mở cửa sổ.
+- [x] **11.4** Resize cửa sổ 2 chiều bằng 8 vùng biên/corner + `winit::drag_resize_window`, cursor đổi theo cạnh.
+- [ ] **11.5** Cuộn ngang khi tổng bề rộng cột vượt vùng nhìn (hiện kẹp theo content width).
+
+## Giai đoạn 12: Menu chuột phải và Open with
+
+- [x] **12.1** Menu ngữ cảnh rộng 300px, nhãn elide, phím tắt căn phải, nhãn nhóm ("Thẻ màu"), vạch chia; cao tối đa 480px và cuộn thay vì tràn đáy.
+- [x] **12.2** Menu neo đúng điểm chuột (`absolute-position + mouse`), mở khi nhả chuột phải để cú nhả không đóng menu, kẹp trong cửa sổ.
+- [x] **12.3** Liệt kê ứng dụng Open with qua Shell (`SHAssocEnumHandlers`), ưu tiên tên hiển thị, khử trùng, tối đa 16; menu con "Mở bằng" lật phải/trái tùy chỗ, luôn có "Ứng dụng khác…" mở `SHOpenWithDialog`.
+- [x] **12.4** Gọi handler qua `IShellItem` + `IDataObject` + `IAssocHandler::Invoke`; **đã kiểm chứng** Notepad mở `hello.txt` từ menu con; thêm lệnh palette "Mở bằng ứng dụng khác…". **224 test pass**, clippy 0 cảnh báo.
+
+## Giai đoạn 13: Căn chỉnh command bar và phản hồi thao tác dài
+
+- [x] **13.1** Icon và nhãn trong `CommandButton` căn cùng trục dọc (`cross-axis-alignment: center`), thẳng hàng với các `IconButton` bên cạnh.
+- [x] **13.2** Tiêu đề cột căn giữa khung cột (lề trái/phải bằng nhau, vẫn chừa 20px cho vạch kéo cột).
+- [x] **13.3** Thẻ tiến trình nổi ở góc phải trên thanh trạng thái cho thao tác chạy lâu hơn 300ms: tên thao tác, đếm giây, thanh tiến trình xác định hoặc chạy vô định, nút Huỷ khi huỷ được. Thao tác xong hiện toast thành công/lỗi, tự đóng sau ~4 giây và có nút đóng.
+- [x] **13.4** Trạng thái busy không còn kẹt sau khi tính kích thước thư mục thủ công hoặc tìm kiếm; thẻ tiến trình không hiện cho thao tác tức thời.
+- [x] **13.5** **Đã kiểm chứng** bằng nén thật thư mục 608MB: thẻ hiện "Đang nén… · 0 giây", "2 giây", thanh chạy vô định; xong sau 7 giây hiện toast xanh "Đã nén 30 tệp vào big.zip" rồi tự ẩn. **224 test pass**, clippy 0 cảnh báo.
 
 ## Nhật ký thay đổi
 
@@ -205,3 +261,15 @@ Ngoài phạm vi hiện tại (không làm trừ khi có yêu cầu rõ): FTP, c
 | 2026-11-18 | 6.10 | Git status qua CLI, cột chữ cái có màu. Sửa lỗi thứ tự `--no-optional-locks`. 16 test. |
 | 2026-11-18 | 6.7 (một phần) | Làm rỗng Thùng rác hoạt động. Duyệt/khôi phục từng mục chưa làm — `SHGetKnownFolderPath` trả E_FAIL; ghi rõ trong plan thay vì giả vờ. |
 | 2026-11-18 | 6.8 | Nhiều cửa sổ, mỗi cửa sổ state riêng. main.rs còn 20 dòng. 4 test. |
+| 2026-11-18 | Đợt cải tiến sau review (`CODE_REVIEW_PLAN.md`) | Mục 1: 16 chỗ `return;` nuốt test thay bằng `common::skip` (panic trên CI). Mục 2: bỏ tham số thừa ở `recycle::restore`. Mục 3: tách `ops_worker` (982 → 631 dòng) thành `progress.rs` và `tests.rs`. Mục 4: `thumbcache` không nuốt lỗi tạo thư mục, thêm test ghi vào chỗ bị chặn. Mục 5 chưa làm (cần quyết định cách tách `app.slint`). **228 test pass, clippy 0 cảnh báo.** |
+| 2026-11-18 | 9.1–9.11 | Sửa lỗi review: chặn mất dữ liệu khi Replace cùng thư mục và khi nén ZIP; thumbnail sang luồng aux và lỗi im lặng; làm rỗng Thùng rác bằng `SHEmptyRecycleBinW`; hoàn thiện 6 lệnh palette; git status đúng ở thư mục con; huỷ tìm kiếm; tách `status-message`; chặn panic menu thẻ; Ctrl+N/Ctrl+Shift+N; accessibility FluentButton; batch lỗi một phần vẫn hoàn tác được. **209 test pass**, clippy 0 cảnh báo, release 20,2 MB. |
+| 2026-11-18 | 9.12–9.17 | Hoàn tất giai đoạn 9: tooltip breadcrumb, undo/làm lại chạy trên worker, lưới co giãn theo bề rộng thật, đồng bộ settings/tags giữa nhiều cửa sổ, cache thumbnail trên đĩa (64 MB, ghi nguyên tử), chặn junction trong `directory_size`. **221 test pass**, clippy 0 cảnh báo, release 20,3 MB. Đã kiểm chứng tooltip và lưới bằng UI automation + ảnh chụp. |
+| 2026-11-18 | 10.1–10.4 | Căn chỉnh giao diện theo Files: gộp title bar + tab (bỏ tên app), nút cửa sổ chuẩn, address bar trước command bar, command bar trong content pane, search tách nhóm, panel toggles sang command bar, hợp nhất bề mặt tối, cột Thẻ. Kiểm chứng UIA: maximize/restore, kéo cửa sổ, tab mới/đóng tab. **221 test pass**, clippy 0 cảnh báo. |
+| 2026-11-18 | 10.5–10.8 (một phần) | Search có placeholder + icon trái; hai panel cùng 240px, cùng bề mặt; cột Loại/Kích thước tự ẩn khi preview mở để không bị cắt; sidebar icon–chữ 12px, header Ổ đĩa thu gọn, icon ổ hệ thống, footer Cài đặt; row 38px. **221 test pass**, clippy 0 cảnh báo. |
+| 2026-11-18 | 11.1–11.4 | Cột details kéo giãn được, kéo header để đổi thứ tự, lưu bền trong settings; resize cửa sổ 2 chiều bằng 8 vùng biên. Vạch chia full-height + điểm neo hover accent để dễ thấy giới hạn cột. **223 test pass**, clippy 0 cảnh báo. Kiểm chứng resize cửa sổ bằng chuột thật; thao tác kéo cột cần người dùng kiểm tra vì automation bị cửa sổ khác tranh focus. |
+| 2026-11-18 | 12.1–12.4 | Menu chuột phải: rộng 300px, chữ elide, phím tắt căn phải, nhãn nhóm, cuộn trong 480px; neo đúng điểm chuột và mở lúc nhả chuột để không tự đóng. Open with lấy handler thật từ Shell, menu con "Mở bằng" + "Ứng dụng khác…", gọi `IAssocHandler::Invoke`; **đã kiểm chứng** Notepad mở `hello.txt`. **224 test pass**, clippy 0 cảnh báo. |
+| 2026-11-18 | 13.1–13.5 | Command bar: icon và chữ cùng trục dọc. Header cột căn giữa khung, chừa đều hai bên. Thẻ tiến trình nổi: hiện sau 300ms, đếm giây, progress xác định/vô định, Huỷ; toast thành công/lỗi tự đóng 4s. Sửa busy kẹt ở tính kích thước và tìm kiếm. **Đã kiểm chứng** nén 608MB trong 7 giây và thấy đủ trạng thái chạy + toast. **224 test pass**, clippy 0 cảnh báo. |
+| 2026-11-18 | 1.0.0 | Phát hành **Files RS 1.0.0**: workspace + VERSIONINFO `1.0.0.0`, release build 21,2 MB, icon + manifest `highestAvailable`. Đóng gói portable `Desktop\Files RS 1.0\Files RS.exe` và chạy thử từ Desktop. **224 test pass**, clippy 0 cảnh báo. |
+| 2026-11-18 | 5.3, 6.9 | Kéo-thả nội bộ giữa hai khung (move/Ctrl-copy, ghost + vùng thả), nhận tệp từ ứng dụng ngoài bằng OLE `IDropTarget` vào pane/sidebar, và hai khung details/grid độc lập. Đã kiểm chứng move, Ctrl-copy, external drop vào list/sidebar bằng dữ liệu `CF_HDROP`. **224 test pass**, clippy 0 cảnh báo. |
+| 2026-11-18 | 7.1–7.5 | Thêm workflow test files-fs, zip-slip (tương đối + tuyệt đối), benchmark 10k tệp (~1,1 s), checklist thủ công `docs/manual-test.md`, và cảnh báo kích thước module trong CI. **227 test pass**, clippy 0 cảnh báo. |
+| 2026-11-18 | 2.0.0 | Phát hành **Files RS 2.0.0**: workspace + manifest `2.0.0.0`, release 22,2 MB gồm dual pane, kéo-thả nội bộ/Explorer, Open with, thẻ tiến trình và Phase 7. Đóng gói `Desktop\Files RS 2.0\Files RS.exe`; bản 1.0 giữ nguyên. **227 test pass**, clippy 0 cảnh báo. |

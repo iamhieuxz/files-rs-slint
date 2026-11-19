@@ -1,22 +1,20 @@
-﻿//! Selection: single click, Ctrl-click, Shift-range, and keyboard movement.
+//! Selection: single click, Ctrl-click, Shift-range, and keyboard movement.
 //!
 //! Selection is stored as indices into `Tab::entries`, never into the filtered
 //! `visible` list, so a filter change cannot silently retarget an operation.
 
-use crate::slint_generated::*;
-use crate::state::App;
 use crate::preview;
+use crate::slint_generated::*;
+use crate::state::{App, Pane};
 use crate::view::{grid_columns, push_status};
 use slint::{Model, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-
 pub fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, mode: i32) {
     {
         let mut s = app.borrow_mut();
-        let active = s.active;
-        let tab = &mut s.tabs[active];
+        let tab = s.tab_mut();
         let Some(entry_index) = tab.visible.get(visible_index).copied() else {
             return;
         };
@@ -78,7 +76,14 @@ pub fn select_row(ui: &AppWindow, app: &Rc<RefCell<App>>, visible_index: usize, 
 pub fn update_selection_flags(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let a = app.borrow();
     let tab = a.tab();
-    let rows = ui.get_rows();
+    let (rows, grid, grid_width) = match a.active_pane {
+        Pane::Left => (ui.get_rows(), ui.get_grid_rows(), a.grid_width),
+        Pane::Right => (
+            ui.get_right_rows(),
+            ui.get_right_grid_rows(),
+            a.right_grid_width,
+        ),
+    };
     for (visible_index, entry_index) in tab.visible.iter().enumerate() {
         let selected = tab.selection.contains(entry_index);
         if let Some(mut row) = rows.row_data(visible_index) {
@@ -90,8 +95,7 @@ pub fn update_selection_flags(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
 
     // Grid là model lồng nhau: cập nhật từng hàng một.
-    let per_row = grid_columns(a.grid_width);
-    let grid = ui.get_grid_rows();
+    let per_row = grid_columns(grid_width);
     for (row_index, line) in tab.visible.chunks(per_row).enumerate() {
         if let Some(line_model) = grid.row_data(row_index) {
             if let Some(inner) = line_model.as_any().downcast_ref::<VecModel<FileRow>>() {
@@ -128,9 +132,7 @@ pub fn update_selection_flags(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 pub fn first_selected_visible(app: &Rc<RefCell<App>>) -> Option<usize> {
     let s = app.borrow();
     let tab = s.tab();
-    tab.visible
-        .iter()
-        .position(|i| tab.selection.contains(i))
+    tab.visible.iter().position(|i| tab.selection.contains(i))
 }
 
 // ---------------------------------------------------------------- command palette

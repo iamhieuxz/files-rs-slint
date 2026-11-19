@@ -21,6 +21,10 @@ fn embed_windows_resources() {
     res.set_manifest_file("app.manifest");
     res.set("ProductName", "Files RS");
     res.set("FileDescription", "Trình quản lý tệp cho Windows");
+    // VERSIONINFO dùng bốn số; Cargo chỉ có ba (1.0.0) nên thêm build 0.
+    let version = format!("{}.0", env!("CARGO_PKG_VERSION"));
+    res.set("FileVersion", &version);
+    res.set("ProductVersion", &version);
     res.set("LegalCopyright", "MIT");
     if let Err(e) = res.compile() {
         // Thiếu rc.exe là chuyện của môi trường build, không phải của mã.

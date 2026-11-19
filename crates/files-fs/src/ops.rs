@@ -16,6 +16,18 @@ use std::path::{Path, PathBuf};
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
 
+/// Số ký tự tối đa của một thành phần tên trên NTFS.
+const MAX_NAME_CHARS: usize = 255;
+
+/// `ERROR_NOT_SAME_DEVICE` (Windows) và `EXDEV` (Unix).
+///
+/// Giữ thành hằng số có tên: con số trần `17`/`18` rất dễ bị đọc sai nghĩa khi
+/// ai đó sửa nhánh lỗi.
+#[cfg(windows)]
+const CROSS_DEVICE_ERRNO: i32 = 17;
+#[cfg(not(windows))]
+const CROSS_DEVICE_ERRNO: i32 = 18;
+
 /// True when the entry carries the Win32 hidden or system attribute.
 ///
 /// Files checks `FileAttributes.Hidden`; the system attribute is included
@@ -59,8 +71,8 @@ pub fn delete_to_recycle_bin(paths: &[PathBuf]) -> Result<usize, FsError> {
         use std::os::windows::ffi::OsStrExt;
         use windows::core::PCWSTR;
         use windows::Win32::UI::Shell::{
-            SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
-            SHFILEOPSTRUCTW,
+            SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+            FO_DELETE, SHFILEOPSTRUCTW,
         };
 
         // The Shell wants a double-NUL-terminated list of absolute paths.
@@ -91,7 +103,12 @@ pub fn delete_to_recycle_bin(paths: &[PathBuf]) -> Result<usize, FsError> {
         if op.fAnyOperationsAborted.as_bool() {
             return Err(FsError::new("delete_aborted", "Thao tác xoá bị huỷ"));
         }
-        Ok(paths.len())
+        // `FOF_NOERRORUI` ẩn lỗi từng mục, nên đếm theo thực tế: mục nào không
+        // còn trên đĩa mới tính là đã xoá.
+        Ok(paths
+            .iter()
+            .filter(|p| std::fs::symlink_metadata(p).is_err())
+            .count())
     }
 
     #[cfg(not(windows))]
@@ -119,17 +136,13 @@ pub fn copy_into_with(
     policy: ConflictPolicy,
 ) -> Result<PathBuf, FsError> {
     let dest = resolve_destination(source, target_dir, policy)?;
-    if dest.exists() && policy == ConflictPolicy::Replace {
-        // Xoá trước khi ghi: `fs::copy` sẽ lỗi nếu đích đang tồn tại.
-        let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
+    // "Thay thế" vào chính thư mục nguồn nghĩa là dest == source. Xoá đích
+    // trước khi chép sẽ xoá luôn nguồn, nên phải từ chối trước mọi thao tác.
+    if same_entry(source, &dest) {
+        return Err(same_path_error());
     }
-    if dest.exists() {
-        return Err(FsError::new(
-            "exists",
-            format!("Đã tồn tại: {}", dest.display()),
-        ));
-    }
-    copy_tree(source, &dest)?;
+    reject_into_descendant(source, target_dir)?;
+    replace_staged(&dest, policy, || copy_tree(source, &dest))?;
     Ok(dest)
 }
 
@@ -145,23 +158,111 @@ pub fn move_into_with(
     policy: ConflictPolicy,
 ) -> Result<PathBuf, FsError> {
     let dest = resolve_destination(source, target_dir, policy)?;
-    if dest.exists() && policy == ConflictPolicy::Replace {
-        let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
+    // Cùng lý do với copy: xoá đích trùng nguồn là xoá mất dữ liệu.
+    if same_entry(source, &dest) {
+        return Err(same_path_error());
     }
-    if dest.exists() {
+    reject_into_descendant(source, target_dir)?;
+    replace_staged(&dest, policy, || {
+        // Same volume: a rename is atomic and cheap. Different volume: fall back
+        // to copy + delete, which is what the Shell does too. Any other error
+        // (access denied, locked file) must surface, not trigger a copy.
+        match std::fs::rename(source, &dest) {
+            Ok(()) => Ok(()),
+            Err(e) if is_cross_device(&e) => {
+                copy_tree(source, &dest)?;
+                remove_tree(source)
+            }
+            Err(e) => Err(FsError::from(e)),
+        }
+    })?;
+    Ok(dest)
+}
+
+/// `ERROR_NOT_SAME_DEVICE` (Windows) hoặc `EXDEV` (Unix).
+fn is_cross_device(e: &std::io::Error) -> bool {
+    e.raw_os_error() == Some(CROSS_DEVICE_ERRNO)
+}
+
+/// Từ chối chép/chuyển một thư mục vào chính nó hoặc thư mục con của nó.
+///
+/// Nếu không chặn, `copy_tree` sẽ đọc thư mục đang được chính nó ghi thêm và
+/// không bao giờ dừng; `rename` thì hỏng giữa chừng.
+fn reject_into_descendant(source: &Path, target_dir: &Path) -> Result<(), FsError> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+    if let (Ok(src), Ok(dst)) = (
+        std::fs::canonicalize(source),
+        std::fs::canonicalize(target_dir),
+    ) {
+        if dst.starts_with(&src) {
+            return Err(FsError::new(
+                "into_self",
+                "Không thể chép hoặc di chuyển một thư mục vào chính nó",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Chạy `write` để tạo `dest`, xử lý đích đã tồn tại theo `policy`.
+///
+/// `Replace` không xoá trước: mục cũ được đổi sang tên tạm, `write` chạy, rồi
+/// mới xoá bản cũ. Nếu `write` lỗi thì bản cũ được trả về chỗ cũ.
+fn replace_staged(
+    dest: &Path,
+    policy: ConflictPolicy,
+    write: impl FnOnce() -> Result<(), FsError>,
+) -> Result<(), FsError> {
+    if !dest.exists() {
+        return write();
+    }
+    if policy != ConflictPolicy::Replace {
         return Err(FsError::new(
             "exists",
             format!("Đã tồn tại: {}", dest.display()),
         ));
     }
-    // Same volume: a rename is atomic and cheap. Different volume: fall back to
-    // copy + delete, which is what the Shell does too.
-    match std::fs::rename(source, &dest) {
-        Ok(()) => Ok(dest),
-        Err(_) => {
-            copy_tree(source, &dest)?;
-            remove_tree(source)?;
-            Ok(dest)
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let backup = unique_path(parent, &format!(".{name}.replaced"), "");
+    std::fs::rename(dest, &backup).map_err(FsError::from)?;
+    match write() {
+        Ok(()) => {
+            // Bản mới đã ghi xong; dọn bản cũ là việc phụ. Nếu dọn lỗi thì chỉ
+            // ghi log — báo thao tác thất bại lúc này là nói dối người dùng,
+            // vì dữ liệu mới đã nằm đúng chỗ.
+            if let Err(e) = remove_tree(&backup) {
+                crate::log::warn(&format!(
+                    "không dọn được bản cũ {}: {}",
+                    backup.display(),
+                    e.message
+                ));
+            }
+            Ok(())
+        }
+        Err(e) => {
+            // Dọn phần ghi dở rồi trả bản cũ về. Nếu không dọn được thì bản cũ
+            // vẫn nằm ở `backup`; phải nói rõ đường dẫn đó thay vì trả một lỗi
+            // rename khó hiểu và để người dùng tưởng dữ liệu đã mất.
+            let _ = remove_tree(dest);
+            if let Err(restore) = std::fs::rename(&backup, dest) {
+                return Err(FsError::new(
+                    "replace_rollback_failed",
+                    format!(
+                        "Thao tác lỗi ({}) và không trả được bản cũ về chỗ cũ ({}). \
+                         Dữ liệu cũ vẫn còn tại {}.",
+                        e.message,
+                        restore,
+                        backup.display()
+                    ),
+                ));
+            }
+            Err(e)
         }
     }
 }
@@ -192,22 +293,19 @@ fn remove_tree(path: &Path) -> Result<(), FsError> {
 /// Rename `source` to `new_name`, keeping it in the same directory.
 pub fn rename(source: &Path, new_name: &str) -> Result<PathBuf, FsError> {
     let trimmed = new_name.trim();
-    if trimmed.is_empty() {
-        return Err(FsError::new("invalid_name", "Tên không được để trống"));
-    }
-    // A name that contains a separator would silently move the entry elsewhere.
-    if trimmed.contains(['\\', '/']) {
-        return Err(FsError::new(
-            "invalid_name",
-            "Tên không được chứa dấu phân cách đường dẫn",
-        ));
-    }
+    validate_name(trimmed)?;
     let parent = source
         .parent()
         .ok_or_else(|| FsError::new("invalid_path", "Không có thư mục cha"))?;
     let dest = parent.join(trimmed);
     if dest == source {
         return Ok(dest);
+    }
+    // NTFS không phân biệt hoa/thường: `a.txt` → `A.txt` khiến `dest.exists()`
+    // đúng dù đó chính là tệp đang đổi tên. Chặn bằng `exists()` sẽ làm người
+    // dùng không đổi được kiểu chữ của tên.
+    if same_entry(source, &dest) {
+        return rename_changing_case(source, &dest);
     }
     if dest.exists() {
         return Err(FsError::new(
@@ -219,9 +317,70 @@ pub fn rename(source: &Path, new_name: &str) -> Result<PathBuf, FsError> {
     Ok(dest)
 }
 
+/// Đổi tên chỉ khác hoa/thường, qua một tên tạm trung gian.
+///
+/// Windows không cho `rename` trực tiếp sang tên chỉ khác kiểu chữ khi tên đích
+/// đang tồn tại (nó chính là tệp nguồn). Đi qua tên tạm là cách Explorer làm.
+fn rename_changing_case(source: &Path, dest: &Path) -> Result<PathBuf, FsError> {
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let temp = unique_path(parent, ".files-rs-rename", ".tmp");
+    std::fs::rename(source, &temp).map_err(FsError::from)?;
+    match std::fs::rename(&temp, dest) {
+        Ok(()) => Ok(dest.to_path_buf()),
+        Err(e) => {
+            // Trả tệp về tên cũ thay vì để nó mắc kẹt ở tên tạm.
+            let _ = std::fs::rename(&temp, source);
+            Err(FsError::from(e))
+        }
+    }
+}
+
+/// Kiểm tra một tên mục đơn lẻ (không phải đường dẫn).
+///
+/// Từ chối tên rỗng, dấu phân cách, `.` và `..`, ký tự cấm của Windows, tên
+/// thiết bị DOS (`CON`, `NUL`, `COM1`…) và dấu chấm hoặc khoảng trắng ở cuối.
+pub fn validate_name(name: &str) -> Result<(), FsError> {
+    let bad = |msg: &str| Err(FsError::new("invalid_name", msg));
+    if name.is_empty() {
+        return bad("Tên không được để trống");
+    }
+    if name.contains(['\\', '/']) {
+        return bad("Tên không được chứa dấu phân cách đường dẫn");
+    }
+    if name == "." || name == ".." {
+        return bad("Tên không hợp lệ");
+    }
+    if name.contains(['<', '>', ':', '"', '|', '?', '*']) || name.chars().any(|c| c.is_control()) {
+        return bad("Tên chứa ký tự không được phép: < > : \" | ? *");
+    }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return bad("Tên không được kết thúc bằng dấu chấm hoặc khoảng trắng");
+    }
+    // NTFS giới hạn 255 ký tự cho một thành phần tên. Báo ở đây để người dùng
+    // nhận thông báo hành động được thay vì lỗi OS khó hiểu.
+    if name.chars().count() > MAX_NAME_CHARS {
+        return bad("Tên quá dài (tối đa 255 ký tự)");
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0');
+    if reserved {
+        return bad("Tên trùng với tên thiết bị dành riêng của Windows");
+    }
+    Ok(())
+}
+
 /// Create a new folder named `name` inside `parent`, choosing a free name.
 pub fn create_folder(parent: &Path, name: &str) -> Result<PathBuf, FsError> {
-    let base = if name.trim().is_empty() { "Thư mục mới" } else { name.trim() };
+    let base = if name.trim().is_empty() {
+        "Thư mục mới"
+    } else {
+        name.trim()
+    };
+    validate_name(base)?;
     let dest = unique_path(parent, base, "");
     std::fs::create_dir(&dest).map_err(FsError::from)?;
     Ok(dest)
@@ -229,7 +388,12 @@ pub fn create_folder(parent: &Path, name: &str) -> Result<PathBuf, FsError> {
 
 /// Create an empty file named `name` inside `parent`.
 pub fn create_file(parent: &Path, name: &str) -> Result<PathBuf, FsError> {
-    let base = if name.trim().is_empty() { "Tệp mới" } else { name.trim() };
+    let base = if name.trim().is_empty() {
+        "Tệp mới"
+    } else {
+        name.trim()
+    };
+    validate_name(base)?;
     let dest = unique_path(parent, base, ".txt");
     std::fs::OpenOptions::new()
         .write(true)
@@ -255,6 +419,14 @@ fn unique_path(parent: &Path, base: &str, extension: &str) -> PathBuf {
         }
     }
     first
+}
+
+/// Đường dẫn con còn trống đầu tiên, dùng khi UI cần tự chọn tên.
+///
+/// Ví dụ nén `photos` khi `photos.zip` đã tồn tại sẽ nhận `photos (2).zip`
+/// thay vì ghi đè archive cũ.
+pub fn free_path(parent: &Path, base: &str, extension: &str) -> PathBuf {
+    unique_path(parent, base, extension)
 }
 
 /// Cách xử lý khi mục đích đã tồn tại.
@@ -316,6 +488,27 @@ fn resolve_destination(
     }
 }
 
+/// Hai đường dẫn có trỏ vào cùng một mục đang tồn tại hay không.
+///
+/// So sánh chuỗi đơn thuần bỏ sót khác biệt hoa/thường và dấu phân cách cuối,
+/// nên khi cả hai tồn tại thì so sánh đường dẫn chuẩn hoá của hệ điều hành.
+fn same_entry(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn same_path_error() -> FsError {
+    FsError::new(
+        "same_path",
+        "Nguồn và đích là cùng một mục — không có gì để thay thế",
+    )
+}
+
 /// Human-readable label for a copy of `source` that will not collide.
 pub fn suggested_copy_name(source: &Path) -> String {
     let stem = source
@@ -368,7 +561,9 @@ pub fn copy_text_to_clipboard(text: &str) -> Result<(), FsError> {
         use windows::Win32::System::DataExchange::{
             CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
         };
-        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        use windows::Win32::System::Memory::{
+            GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+        };
 
         // The clipboard wants UTF-16, NUL-terminated.
         let wide: Vec<u16> = std::ffi::OsStr::new(text)
@@ -389,7 +584,10 @@ pub fn copy_text_to_clipboard(text: &str) -> Result<(), FsError> {
                     FsError::new("clipboard_failed", format!("Không xoá được clipboard: {e}"))
                 })?;
                 let handle = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(|e| {
-                    FsError::new("clipboard_failed", format!("Không cấp phát được bộ nhớ: {e}"))
+                    FsError::new(
+                        "clipboard_failed",
+                        format!("Không cấp phát được bộ nhớ: {e}"),
+                    )
                 })?;
                 let ptr = GlobalLock(handle);
                 if ptr.is_null() {
@@ -448,21 +646,56 @@ pub fn open_terminal(dir: &Path) -> Result<(), FsError> {
 /// This walks the tree, which on a large folder can take seconds; callers must
 /// run it off the UI thread. Unreadable children are skipped rather than
 /// failing the whole count — a folder the user can see should still report the
-/// size of the part that is readable.
+/// size of the part that is readable. Junctions/symlinks are not followed:
+/// they can form cycles and would otherwise count the same tree many times.
 pub fn directory_size(dir: &Path) -> u64 {
     let mut total = 0u64;
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
     for entry in entries.flatten() {
+        let child = entry.path();
+        if is_reparse_point(&child) {
+            continue;
+        }
         let Ok(meta) = entry.metadata() else { continue };
         if meta.is_dir() {
-            total = total.saturating_add(directory_size(&entry.path()));
+            total = total.saturating_add(directory_size(&child));
         } else {
             total = total.saturating_add(meta.len());
         }
     }
     total
+}
+
+/// True when the path is a reparse point (junction, symlink, mount point).
+#[cfg(windows)]
+pub(crate) fn is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
+    };
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `wide` là buffer NUL-terminated; hàm chỉ đọc thuộc tính.
+    let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+    if attrs == INVALID_FILE_ATTRIBUTES {
+        // Không đọc được thì coi như reparse point để không đi vào.
+        return true;
+    }
+    attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_reparse_point(path: &Path) -> bool {
+    path.symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(true)
 }
 
 /// Đích mà một tệp `.lnk` trỏ tới.
@@ -490,10 +723,14 @@ pub fn shortcut_target(path: &Path) -> Option<PathBuf> {
 
     // SAFETY: mọi lời gọi đều kiểm tra kết quả; buffer sống đủ lâu.
     unsafe {
-        let link: IShellLinkW =
-            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
         let persist: IPersistFile = link.cast().ok()?;
-        persist.Load(PCWSTR(wide.as_ptr()), windows::Win32::System::Com::STGM_READ).ok()?;
+        persist
+            .Load(
+                PCWSTR(wide.as_ptr()),
+                windows::Win32::System::Com::STGM_READ,
+            )
+            .ok()?;
 
         let mut buf = [0u16; 1024];
         link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
@@ -522,7 +759,10 @@ pub fn rotate_image_clockwise(path: &Path) -> Result<(), FsError> {
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "bmp" | "gif" | "tif" | "tiff") {
+    if !matches!(
+        ext.as_str(),
+        "jpg" | "jpeg" | "png" | "bmp" | "gif" | "tif" | "tiff"
+    ) {
         return Err(FsError::new(
             "unsupported",
             format!("Không xoay được định dạng .{ext}"),
@@ -597,14 +837,13 @@ fn rotate_bytes(bytes: &[u8], ext: &str) -> Result<Vec<u8>, FsError> {
             .map_err(|e| FsError::new("image_failed", format!("mở encoder: {e}")))?;
         // WIC trả khung qua con trỏ ra, không phải giá trị trả về.
         let mut frame_out: Option<windows::Win32::Graphics::Imaging::IWICBitmapFrameEncode> = None;
-        let mut options_out: Option<
-            windows::Win32::System::Com::StructuredStorage::IPropertyBag2,
-        > = None;
+        let mut options_out: Option<windows::Win32::System::Com::StructuredStorage::IPropertyBag2> =
+            None;
         encoder
             .CreateNewFrame(&mut frame_out, &mut options_out)
             .map_err(|e| FsError::new("image_failed", format!("khung đích: {e}")))?;
-        let encoder_frame = frame_out
-            .ok_or_else(|| FsError::new("image_failed", "không tạo được khung đích"))?;
+        let encoder_frame =
+            frame_out.ok_or_else(|| FsError::new("image_failed", "không tạo được khung đích"))?;
         // Không có tuỳ chọn encoder nào: `None` là hợp lệ.
         encoder_frame
             .Initialize(None)
@@ -632,8 +871,12 @@ fn rotate_bytes(bytes: &[u8], ext: &str) -> Result<Vec<u8>, FsError> {
 
         // Đọc kích thước bằng cách seek tới cuối rồi về đầu.
         let mut size = 0u64;
-        out.Seek(0, windows::Win32::System::Com::STREAM_SEEK_END, Some(&mut size))
-            .map_err(|e| FsError::new("image_failed", format!("kích thước: {e}")))?;
+        out.Seek(
+            0,
+            windows::Win32::System::Com::STREAM_SEEK_END,
+            Some(&mut size),
+        )
+        .map_err(|e| FsError::new("image_failed", format!("kích thước: {e}")))?;
         out.Seek(0, windows::Win32::System::Com::STREAM_SEEK_SET, None)
             .map_err(|e| FsError::new("image_failed", format!("về đầu: {e}")))?;
         let mut buf = vec![0u8; size as usize];

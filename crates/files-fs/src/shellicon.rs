@@ -26,7 +26,8 @@ pub fn wants_shell_icon(path: &Path) -> bool {
         .unwrap_or_default();
     matches!(
         ext.as_str(),
-        "exe" | "msi"
+        "exe"
+            | "msi"
             | "lnk"
             | "ico"
             | "url"
@@ -114,12 +115,11 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP,
-        BITMAPINFO,
+        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
     };
     use windows::Win32::UI::Shell::{
-        SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_LARGEICON,
+        SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_SMALLICON,
     };
     use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
@@ -266,7 +266,11 @@ fn shell_icon_windows(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsErro
             px.swap(0, 2);
         }
 
-        Ok(Some(RgbaIcon { width: w, height: h, pixels: buf }))
+        Ok(Some(RgbaIcon {
+            width: w,
+            height: h,
+            pixels: buf,
+        }))
     })();
 
     // SAFETY: `hicon` đến từ `SHGetFileInfoW` với cờ `SHGFI_ICON`, thuộc sở
@@ -380,7 +384,11 @@ pub fn thumbnail(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsError> {
             .CopyPixels(std::ptr::null(), stride, &mut buf)
             .map_err(|e| FsError::new("thumb_failed", format!("đọc điểm ảnh: {e}")))?;
 
-        Ok(Some(RgbaIcon { width: tw, height: th, pixels: buf }))
+        Ok(Some(RgbaIcon {
+            width: tw,
+            height: th,
+            pixels: buf,
+        }))
     }
 }
 
@@ -388,7 +396,6 @@ pub fn thumbnail(path: &Path, size: u32) -> Result<Option<RgbaIcon>, FsError> {
 pub fn thumbnail(_path: &Path, _size: u32) -> Result<Option<RgbaIcon>, FsError> {
     Ok(None)
 }
-
 
 #[cfg(test)]
 mod tests {

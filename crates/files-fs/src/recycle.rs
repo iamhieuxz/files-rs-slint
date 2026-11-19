@@ -64,8 +64,7 @@ pub fn list() -> Result<Vec<RecycleItem>, FsError> {
 /// nothing is worse than one that explains itself.
 ///
 /// Emptying the bin and listing it are fully supported.
-pub fn restore(item: &RecycleItem) -> Result<(), FsError> {
-    let _ = item;
+pub fn restore(_item: &RecycleItem) -> Result<(), FsError> {
     Err(FsError::new(
         "recycle_unsupported",
         "Khôi phục từng mục chưa được hỗ trợ — hãy dùng File Explorer",
@@ -80,40 +79,26 @@ pub fn can_restore() -> bool {
 }
 
 /// Empty the Recycle Bin.
+///
+/// `SHEmptyRecycleBinW` is the Shell API meant for this: it knows where every
+/// volume's bin lives, unlike `SHFileOperationW` on a guessed path. The app asks
+/// its own confirmation first, so the Shell UI is suppressed here.
 pub fn empty() -> Result<(), FsError> {
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
         use windows::Win32::UI::Shell::{
-            SHFileOperationW, FOF_NOERRORUI, FOF_NOCONFIRMATION, FOF_SILENT, FO_DELETE,
-            SHFILEOPSTRUCTW,
+            SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHERB_NOSOUND,
         };
 
-        // Shell cần danh sách đường dẫn kết thúc bằng hai NUL.
-        let path = bin_path()?;
-        let abs = std::path::absolute(&path).map_err(FsError::from)?;
-        let mut from: Vec<u16> = abs.as_os_str().encode_wide().collect();
-        from.push(0);
-        from.push(0);
-
-        let mut op = SHFILEOPSTRUCTW {
-            wFunc: FO_DELETE,
-            // Đường dẫn của Thùng rác chính là thứ cần dọn.
-            pFrom: PCWSTR(from.as_ptr()),
-            // `fFlags` là u16, còn các hằng FOF_* là FILEOPERATION_FLAGS.
-            fFlags: (FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT).0 as u16,
-            ..Default::default()
-        };
-        // SAFETY: `from` là danh sách NUL kép; `op` trỏ vào buffer còn sống.
-        let code = unsafe { SHFileOperationW(&mut op) };
-        if code != 0 {
-            return Err(FsError::new(
+        let flags = SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND;
+        // SAFETY: documented call with no pointers of our own; a null HWND and
+        // null root path mean "all drives", and the flags suppress Shell UI.
+        unsafe { SHEmptyRecycleBinW(None, windows::core::PCWSTR::null(), flags) }.map_err(|e| {
+            FsError::new(
                 "recycle_failed",
-                format!("Không làm rỗng được Thùng rác (mã {code})"),
-            ));
-        }
-        Ok(())
+                format!("Không làm rỗng được Thùng rác: {e}"),
+            )
+        })
     }
     #[cfg(not(windows))]
     {

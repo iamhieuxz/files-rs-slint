@@ -26,10 +26,26 @@ pub struct Tag {
 /// between the two apps sees the same names and colours.
 pub fn default_tags() -> Vec<Tag> {
     vec![
-        Tag { uid: "f7e0e137-2eb5-4fa4-a50d-ddd65df17c34".into(), name: "Home".into(), color: "#0072BD".into() },
-        Tag { uid: "c84a8131-c4de-47d9-9440-26e859d14b3d".into(), name: "Work".into(), color: "#D95319".into() },
-        Tag { uid: "d4b8d4bd-ceaf-4e58-ac61-a185fcf96c5d".into(), name: "Photos".into(), color: "#EDB120".into() },
-        Tag { uid: "79376daf-c44a-4fe4-aa3b-8b30baea453e".into(), name: "Important".into(), color: "#77AC30".into() },
+        Tag {
+            uid: "f7e0e137-2eb5-4fa4-a50d-ddd65df17c34".into(),
+            name: "Home".into(),
+            color: "#0072BD".into(),
+        },
+        Tag {
+            uid: "c84a8131-c4de-47d9-9440-26e859d14b3d".into(),
+            name: "Work".into(),
+            color: "#D95319".into(),
+        },
+        Tag {
+            uid: "d4b8d4bd-ceaf-4e58-ac61-a185fcf96c5d".into(),
+            name: "Photos".into(),
+            color: "#EDB120".into(),
+        },
+        Tag {
+            uid: "79376daf-c44a-4fe4-aa3b-8b30baea453e".into(),
+            name: "Important".into(),
+            color: "#77AC30".into(),
+        },
     ]
 }
 
@@ -80,7 +96,15 @@ impl TagStore {
         let Ok(text) = std::fs::read_to_string(path) else {
             return Self::default();
         };
-        serde_json::from_str(&text).unwrap_or_default()
+        // Như `Settings::load`: file 0 byte do bước kiểm tra quyền ghi tạo ra,
+        // không phải JSON hỏng, nên không được đổi tên thành `.corrupt`.
+        if text.trim().is_empty() {
+            return Self::default();
+        }
+        serde_json::from_str(&text).unwrap_or_else(|_| {
+            crate::persist::quarantine(path);
+            Self::default()
+        })
     }
 
     /// Write the store, creating the folder if needed.
@@ -90,7 +114,7 @@ impl TagStore {
         }
         let text = serde_json::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, text)
+        crate::persist::write_atomic(path, &text)
     }
 
     /// Find a tag definition by uid.
@@ -112,7 +136,9 @@ impl TagStore {
     /// The first tag wins because that is what the icon shows; a second tag is
     /// still recorded and visible in the menu.
     pub fn color_for(&self, path: &Path) -> Option<u32> {
-        self.tags_for(path).first().and_then(|t| parse_hex(&t.color))
+        self.tags_for(path)
+            .first()
+            .and_then(|t| parse_hex(&t.color))
     }
 
     /// Attach `uid` to `path`. Applying the same tag twice is a no-op.
@@ -143,7 +169,8 @@ impl TagStore {
 
     /// Remove every tag from `path`.
     pub fn clear(&mut self, path: &Path) {
-        self.assignments.remove(&path.to_string_lossy().into_owned());
+        self.assignments
+            .remove(&path.to_string_lossy().into_owned());
     }
 
     /// Drop assignments whose entry vanished from disk, so the file does not
@@ -292,6 +319,31 @@ mod tests {
     }
 
     #[test]
+    fn two_writers_do_not_drop_each_others_assignments() {
+        // Mô phỏng hai cửa sổ dùng chung tags.json: mỗi bên đọc bản mới nhất
+        // trước khi sửa, nên thẻ của bên kia không bị xoá.
+        let dir = scratch("tags-two-writers");
+        let path = dir.join("tags.json");
+        let blue = default_tags()[0].uid.clone();
+        let orange = default_tags()[1].uid.clone();
+        let a = Path::new(r"C:\x\cua-so-a.txt");
+        let b = Path::new(r"C:\x\cua-so-b.txt");
+
+        let mut first = TagStore::load(&path);
+        first.attach(a, &blue);
+        first.save(&path).expect("ghi được");
+
+        let mut second = TagStore::load(&path);
+        second.attach(b, &orange);
+        second.save(&path).expect("ghi được");
+
+        let final_store = TagStore::load(&path);
+        assert_eq!(final_store.color_for(a), Some(0x0072BD), "thẻ của A còn");
+        assert_eq!(final_store.color_for(b), Some(0xD95319), "thẻ của B còn");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_missing_file_loads_the_defaults() {
         let store = TagStore::load(Path::new(r"C:\khong\co\tags.json"));
         assert_eq!(store.tags.len(), 4);
@@ -305,6 +357,22 @@ mod tests {
         std::fs::write(&path, "{ đây không phải json").unwrap();
         let store = TagStore::load(&path);
         assert_eq!(store.tags.len(), 4, "phải quay về mặc định");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_empty_file_keeps_the_path_in_place() {
+        // Như settings: file 0 byte do bước kiểm tra quyền ghi tạo ra không
+        // phải dữ liệu hỏng, nên không được đổi tên thành `.corrupt`.
+        let dir = scratch("tags-empty");
+        let path = dir.join("tags.json");
+        std::fs::File::create(&path).unwrap();
+
+        let store = TagStore::load(&path);
+
+        assert_eq!(store.tags.len(), 4);
+        assert!(path.exists(), "file rỗng phải được giữ nguyên tại chỗ");
+        assert!(!dir.join("tags.json.corrupt").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -337,7 +405,11 @@ mod tests {
         let mut store = TagStore::default();
         store.attach(outside, &store.tags[0].uid.clone());
         store.prune_missing(&dir);
-        assert_eq!(store.tags_for(outside).len(), 1, "ngoài phạm vi thì giữ nguyên");
+        assert_eq!(
+            store.tags_for(outside).len(),
+            1,
+            "ngoài phạm vi thì giữ nguyên"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

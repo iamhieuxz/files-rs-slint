@@ -20,7 +20,11 @@ pub enum UndoAction {
     /// A folder or file was created at `path`.
     Created { path: PathBuf, is_dir: bool },
     /// A paste copied `sources` into `target`, producing `created`.
-    Copied { sources: Vec<PathBuf>, created: Vec<PathBuf>, target: PathBuf },
+    Copied {
+        sources: Vec<PathBuf>,
+        created: Vec<PathBuf>,
+        target: PathBuf,
+    },
     /// A paste moved `(from, to)` pairs.
     Moved { pairs: Vec<(PathBuf, PathBuf)> },
 }
@@ -122,7 +126,6 @@ impl UndoStack {
     pub fn redone(&mut self, action: UndoAction) {
         self.done.push(action);
     }
-
 }
 
 /// Apply the inverse of `action`.
@@ -137,9 +140,7 @@ pub fn undo(action: &UndoAction) -> Result<(), FsError> {
             // the user may have put work into it between create and undo.
             files_fs::delete_to_recycle_bin(std::slice::from_ref(path)).map(|_| ())
         }
-        UndoAction::Copied { created, .. } => {
-            files_fs::delete_to_recycle_bin(created).map(|_| ())
-        }
+        UndoAction::Copied { created, .. } => files_fs::delete_to_recycle_bin(created).map(|_| ()),
         UndoAction::Moved { pairs } => {
             for (from, to) in pairs {
                 let parent = from.parent().unwrap_or(Path::new("."));
@@ -153,18 +154,24 @@ pub fn undo(action: &UndoAction) -> Result<(), FsError> {
 /// Apply `action` again.
 pub fn redo(action: &UndoAction) -> Result<(), FsError> {
     match action {
-        UndoAction::Rename { from, to } => {
-            files_fs::rename(from, &name_of(to)).map(|_| ())
-        }
+        UndoAction::Rename { from, to } => files_fs::rename(from, &name_of(to)).map(|_| ()),
         UndoAction::Created { path, is_dir } => {
-            let parent = path.parent().unwrap_or(Path::new("."));
+            // Đúng đường dẫn đã ghi, không qua `create_file` (nó thêm `.txt` và
+            // đổi sang "tên (2)" khi trùng, làm redo tạo ra thứ khác).
             if *is_dir {
-                files_fs::create_folder(parent, &name_of(path)).map(|_| ())
+                std::fs::create_dir(path).map_err(FsError::from)
             } else {
-                files_fs::create_file(parent, &name_of(path)).map(|_| ())
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)
+                    .map(|_| ())
+                    .map_err(FsError::from)
             }
         }
-        UndoAction::Copied { sources, target, .. } => {
+        UndoAction::Copied {
+            sources, target, ..
+        } => {
             for src in sources {
                 files_fs::copy_into(src, target)?;
             }
@@ -265,6 +272,24 @@ mod tests {
         let mut s = UndoStack::with_capacity(0);
         s.record(action("a"));
         assert!(s.can_undo());
+    }
+
+    #[test]
+    fn redoing_a_created_file_keeps_its_exact_name() {
+        let dir = std::env::temp_dir().join("files-rs-undo-redo-name");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ghi-chu.md");
+
+        redo(&UndoAction::Created {
+            path: path.clone(),
+            is_dir: false,
+        })
+        .expect("redo phải tạo được");
+
+        assert!(path.is_file(), "đúng tên .md, không thành .md.txt");
+        assert!(!dir.join("ghi-chu.md.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

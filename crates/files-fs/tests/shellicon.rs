@@ -12,6 +12,8 @@
 
 #![cfg(windows)]
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -26,7 +28,7 @@ fn system32_exe(name: &str) -> Option<PathBuf> {
 fn a_real_executable_yields_a_non_blank_icon() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let Some(exe) = system32_exe("notepad.exe") else {
-        // A Windows install without notepad is not a failure of this code.
+        common::skip("không có notepad.exe trong System32");
         return;
     };
 
@@ -42,7 +44,13 @@ fn a_real_executable_yields_a_non_blank_icon() {
     );
 
     // A blank icon is all zeros; that is the failure mode this test guards.
-    let opaque = icon.pixels.as_chunks::<4>().0.iter().filter(|px| px[3] > 0).count();
+    let opaque = icon
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
     assert!(
         opaque > 0,
         "the icon must have at least one visible pixel, got an empty bitmap"
@@ -68,11 +76,15 @@ fn a_real_executable_yields_a_non_blank_icon() {
 fn two_different_executables_give_different_icons() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (Some(a), Some(b)) = (system32_exe("notepad.exe"), system32_exe("cmd.exe")) else {
+        common::skip("thiếu notepad.exe hoặc cmd.exe trong System32");
         return;
     };
     let ia = files_fs::shell_icon(&a, 20).ok().flatten();
     let ib = files_fs::shell_icon(&b, 20).ok().flatten();
-    let (Some(ia), Some(ib)) = (ia, ib) else { return };
+    let (Some(ia), Some(ib)) = (ia, ib) else {
+        common::skip("Shell không trả icon cho exe mẫu");
+        return;
+    };
 
     // Same size, different artwork: this is what "the publisher's own icon"
     // means, and it is what makes an exe list readable.
@@ -127,6 +139,7 @@ fn a_wide_image_is_scaled_keeping_its_aspect_ratio() {
         .unwrap_or(false);
     if !ok || !img.exists() {
         let _ = std::fs::remove_dir_all(&root);
+        common::skip("PowerShell không tạo được PNG mẫu (System.Drawing)");
         return;
     }
 
@@ -138,7 +151,13 @@ fn a_wide_image_is_scaled_keeping_its_aspect_ratio() {
     assert_eq!(thumb.height, 24, "giữ tỉ lệ 2:1");
     assert_eq!(thumb.pixels.len(), (48 * 24 * 4) as usize);
     // Ảnh màu xanh đặc: phải có pixel hiển thị được.
-    let opaque = thumb.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
+    let opaque = thumb
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[3] > 0)
+        .count();
     assert!(opaque > 0, "ảnh thu nhỏ không được rỗng");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -165,12 +184,83 @@ fn a_tall_image_is_scaled_by_its_height() {
         .unwrap_or(false);
     if !ok || !img.exists() {
         let _ = std::fs::remove_dir_all(&root);
+        common::skip("PowerShell không tạo được PNG mẫu (System.Drawing)");
         return;
     }
 
     let thumb = files_fs::thumbnail(&img, 48).unwrap().expect("có ảnh");
     assert_eq!(thumb.height, 48);
     assert_eq!(thumb.width, 24);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_thumbnail_is_served_from_the_disk_cache() {
+    // Cache phải hoạt động thật: sau lần giải mã đầu, một tệp nguồn bị hỏng
+    // (cùng kích thước + mtime) vẫn cho ảnh thu nhỏ từ đĩa.
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("thumb-cache");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let img = root.join("anh.png");
+    let cache = root.join("cache");
+    let script = format!(
+        "Add-Type -AssemblyName System.Drawing; \
+         $b = New-Object System.Drawing.Bitmap 200,100; \
+         $g = [System.Drawing.Graphics]::FromImage($b); \
+         $g.Clear([System.Drawing.Color]::Blue); \
+         $b.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); \
+         $g.Dispose(); $b.Dispose()",
+        img.display()
+    );
+    let made = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !made || !img.exists() {
+        let _ = std::fs::remove_dir_all(&root);
+        common::skip("PowerShell không tạo được PNG mẫu (System.Drawing)");
+        return;
+    }
+    let fixed_time = "2020-01-01T00:00:00Z";
+    let set_time = || {
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "(Get-Item '{}').LastWriteTimeUtc = [datetime]'{}'",
+                    img.display(),
+                    fixed_time
+                ),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    if !set_time() {
+        let _ = std::fs::remove_dir_all(&root);
+        common::skip("không đặt được LastWriteTime bằng PowerShell");
+        return;
+    }
+
+    let first = files_fs::thumbnail_cached_in(&cache, &img, 48)
+        .expect("không lỗi")
+        .expect("phải có ảnh thu nhỏ");
+    assert_eq!((first.width, first.height), (48, 24));
+
+    let len = std::fs::metadata(&img).unwrap().len();
+    std::fs::write(&img, vec![0u8; len as usize]).unwrap();
+    if !set_time() {
+        let _ = std::fs::remove_dir_all(&root);
+        common::skip("không đặt được LastWriteTime bằng PowerShell");
+        return;
+    }
+    let second = files_fs::thumbnail_cached_in(&cache, &img, 48).expect("không lỗi");
+    assert!(
+        second.is_some(),
+        "lần hai phải đọc từ cache dù ảnh nguồn đã hỏng"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

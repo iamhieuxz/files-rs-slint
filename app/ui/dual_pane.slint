@@ -1,0 +1,457 @@
+// Khung phải của chế độ hai khung.
+//
+// Đây là bảng details gọn (Tên / Ngày sửa / Kích thước) và lưới tile dùng
+// chung model FileRow với khung trái. Mọi thao tác đọc/ghi đều đi qua callback
+// của AppWindow, nơi `active-pane` được chuyển sang phải trước khi xử lý.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { FluentIcon } from "icons.slint";
+import { FileRow } from "file_row.slint";
+
+export component SecondaryPane inherits Rectangle {
+    in property <[FileRow]> rows;
+    in property <[[FileRow]]> grid-rows;
+    in property <bool> grid-view: false;
+    in property <string> error-text;
+    in property <bool> busy: false;
+    in property <bool> active: false;
+    in property <bool> drop-target: false;
+    in property <string> sort-column: "name";
+    in property <bool> sort-desc: false;
+    in property <bool> dragging: false;
+    in property <bool> drag-copy: true;
+    in property <bool> drag-valid: false;
+
+    callback activated();
+    callback background-clicked();
+    callback open-row(int);
+    callback select-row(int, int);
+    callback row-context-menu(int, length, length);
+    callback background-context-menu(length, length);
+    callback sort-by(string);
+    callback grid-width-changed(length);
+    callback drag-start(int, length, length, bool);
+    callback drag-move(length, length, bool);
+    callback drag-drop(length, length, bool);
+    callback drag-cancel();
+    callback rect-changed(length, length, length, length);
+
+    background: Theme.solid-base;
+    clip: true;
+
+    init => {
+        root.rect-changed(self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+    }
+    changed absolute-position => {
+        root.rect-changed(self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+    }
+    changed height => {
+        root.rect-changed(self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+    }
+    changed width => {
+        root.grid-width-changed(self.width);
+        root.rect-changed(self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+    }
+    // Model được thay sau mỗi lần tải thư mục; báo lại rect lúc này để chắc
+    // chắn toạ độ đã là toạ độ sau layout, không phải 0 lúc init.
+    changed rows => {
+        root.rect-changed(self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+    }
+
+    // Thanh accent mảnh cho biết khung đang nhận lệnh.
+    if root.active: Rectangle {
+        x: 0;
+        y: 0;
+        width: 2px;
+        height: parent.height;
+        background: Theme.accent;
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // ---- Lỗi / đang tải / rỗng ----
+        if root.error-text != "": Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: Theme.s2;
+                padding-left: Theme.s3;
+                padding-right: Theme.s3;
+                Text {
+                    text: root.error-text;
+                    color: Theme.critical;
+                    font-size: Theme.font-body;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        if root.error-text == "" && root.busy: Rectangle {
+            vertical-stretch: 1;
+            Text {
+                text: "Đang đọc thư mục…";
+                color: Theme.text-secondary;
+                font-size: Theme.font-body;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.error-text == "" && !root.busy && !root.drop-target && root.rows.length == 0: Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: Theme.s2;
+                FluentIcon {
+                    name: "folder";
+                    width: 28px;
+                    height: 28px;
+                    tint: Theme.text-tertiary;
+                }
+                Text {
+                    text: "Thư mục này trống";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-body;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if root.error-text == "" && !root.busy && root.rows.length > 0: Rectangle {
+            vertical-stretch: 1;
+
+            // Nền nhận click chuột phải và click trống.
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => { root.activated(); root.background-clicked(); }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) {
+                        root.activated();
+                        root.background-context-menu(
+                            self.absolute-position.x + self.mouse-x,
+                            self.absolute-position.y + self.mouse-y,
+                        );
+                    }
+                }
+            }
+
+            if root.grid-view: ScrollView {
+                VerticalLayout {
+                    padding: Theme.s2;
+                    spacing: Theme.s1;
+                    for line in root.grid-rows: HorizontalLayout {
+                        spacing: Theme.s1;
+                        alignment: start;
+                        for row in line: Rectangle {
+                            height: Theme.grid-tile;
+                            width: Theme.grid-tile;
+                            border-radius: Theme.r-md;
+                            background: row.selected ? Theme.accent-subtle
+                                : gta.has-hover ? Theme.subtle-hover : transparent;
+                            VerticalLayout {
+                                padding: Theme.s2;
+                                spacing: Theme.s1;
+                                alignment: center;
+                                FluentIcon {
+                                    name: row.icon;
+                                    width: 40px;
+                                    height: 40px;
+                                    tint: row.glyph;
+                                }
+                                Text {
+                                    text: row.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-caption;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                    wrap: word-wrap;
+                                    max-height: 32px;
+                                }
+                            }
+                            gta := TouchArea {
+                                clicked => { }
+                                double-clicked => { root.activated(); root.open-row(row.index); }
+                                mouse-cursor: root.dragging
+                                    ? (root.drag-valid ? (root.drag-copy ? copy : move) : no-drop)
+                                    : pointer;
+                                property <length> drag-press-x: 0;
+                                property <length> drag-press-y: 0;
+                                property <bool> drag-armed: false;
+                                pointer-event(e) => {
+                                    let ax = self.absolute-position.x + self.mouse-x;
+                                    let ay = self.absolute-position.y + self.mouse-y;
+                                    if (e.kind == PointerEventKind.down) {
+                                        if (e.button == PointerEventButton.right) {
+                                            self.drag-armed = false;
+                                            root.activated();
+                                            root.select-row(row.index, 0);
+                                        } else if (e.button == PointerEventButton.left) {
+                                            root.activated();
+                                            root.select-row(
+                                                row.index,
+                                                e.modifiers.control ? 2 : (e.modifiers.shift ? 1 : 0),
+                                            );
+                                            self.drag-press-x = self.mouse-x;
+                                            self.drag-press-y = self.mouse-y;
+                                            self.drag-armed = true;
+                                        }
+                                    }
+                                    if (e.kind == PointerEventKind.move && self.drag-armed) {
+                                        if (abs(self.mouse-x - self.drag-press-x) > 8px
+                                            || abs(self.mouse-y - self.drag-press-y) > 8px) {
+                                            self.drag-armed = false;
+                                            root.drag-start(row.index, ax, ay, e.modifiers.control);
+                                        }
+                                    }
+                                    if (e.kind == PointerEventKind.move && root.dragging) {
+                                        root.drag-move(ax, ay, e.modifiers.control);
+                                    }
+                                    if (e.kind == PointerEventKind.up) {
+                                        self.drag-armed = false;
+                                        if (root.dragging) {
+                                            root.drag-drop(ax, ay, e.modifiers.control);
+                                        }
+                                    }
+                                    if (e.kind == PointerEventKind.cancel) {
+                                        self.drag-armed = false;
+                                        if (root.dragging) { root.drag-cancel(); }
+                                    }
+                                    if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) {
+                                        root.row-context-menu(row.index, ax, ay);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.grid-view: VerticalLayout {
+                // ---- Header cột ----
+                Rectangle {
+                    height: Theme.header-height;
+                    HorizontalLayout {
+                        padding-left: Theme.list-pad;
+                        padding-right: Theme.list-pad;
+                        spacing: 0px;
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            background: rname-ta.has-hover ? Theme.subtle-hover : transparent;
+                            Text {
+                                x: 10px;
+                                width: parent.width - 20px;
+                                text: "Tên" + (root.sort-column == "name" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
+                                color: root.sort-column == "name" ? Theme.text-primary : Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            rname-ta := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.activated(); root.sort-by("name"); }
+                            }
+                        }
+                        Rectangle {
+                            width: 130px;
+                            background: rmod-ta.has-hover ? Theme.subtle-hover : transparent;
+                            Text {
+                                x: 6px;
+                                width: parent.width - 12px;
+                                text: "Ngày sửa" + (root.sort-column == "modified" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
+                                color: root.sort-column == "modified" ? Theme.text-primary : Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            rmod-ta := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.activated(); root.sort-by("modified"); }
+                            }
+                        }
+                        Rectangle {
+                            width: 84px;
+                            background: rsize-ta.has-hover ? Theme.subtle-hover : transparent;
+                            Text {
+                                x: 6px;
+                                width: parent.width - 12px;
+                                text: "Kích thước" + (root.sort-column == "size" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
+                                color: root.sort-column == "size" ? Theme.text-primary : Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            rsize-ta := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.activated(); root.sort-by("size"); }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    horizontal-stretch: 1;
+                    background: Theme.stroke-divider;
+                }
+
+                ScrollView {
+                        VerticalLayout {
+                        padding-left: Theme.s2;
+                        padding-right: Theme.s2;
+                        spacing: 0px;
+                        for row in root.rows: Rectangle {
+                            height: Theme.row-height;
+                            border-radius: Theme.r-sm;
+                            background: row.selected ? Theme.accent-subtle
+                                : rta.has-hover ? Theme.subtle-hover : transparent;
+
+                            HorizontalLayout {
+                                padding-left: Theme.s2;
+                                padding-right: Theme.s2;
+                                spacing: Theme.s2;
+                                alignment: stretch;
+                                cross-axis-alignment: center;
+
+                                if row.has-icon-image: Image {
+                                    source: row.icon-image;
+                                    width: 16px;
+                                    height: 16px;
+                                }
+                                if !row.has-icon-image: FluentIcon {
+                                    name: row.icon;
+                                    width: 16px;
+                                    height: 16px;
+                                    tint: row.glyph;
+                                }
+                                Text {
+                                    text: row.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    width: 130px;
+                                    text: row.modified;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-caption;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    width: 84px;
+                                    text: row.size;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-caption;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+
+                            rta := TouchArea {
+                                clicked => { }
+                                double-clicked => { root.activated(); root.open-row(row.index); }
+                                mouse-cursor: root.dragging
+                                    ? (root.drag-valid ? (root.drag-copy ? copy : move) : no-drop)
+                                    : pointer;
+                                property <length> drag-press-x: 0;
+                                property <length> drag-press-y: 0;
+                                property <bool> drag-armed: false;
+                                pointer-event(e) => {
+                                    let ax = self.absolute-position.x + self.mouse-x;
+                                    let ay = self.absolute-position.y + self.mouse-y;
+                                    if (e.kind == PointerEventKind.down) {
+                                        if (e.button == PointerEventButton.right) {
+                                            self.drag-armed = false;
+                                            root.activated();
+                                            root.select-row(row.index, 0);
+                                        } else if (e.button == PointerEventButton.left) {
+                                            root.activated();
+                                            root.select-row(
+                                                row.index,
+                                                e.modifiers.control ? 2 : (e.modifiers.shift ? 1 : 0),
+                                            );
+                                            self.drag-press-x = self.mouse-x;
+                                            self.drag-press-y = self.mouse-y;
+                                            self.drag-armed = true;
+                                        }
+                                    }
+                                    if (e.kind == PointerEventKind.move && self.drag-armed) {
+                                        if (abs(self.mouse-x - self.drag-press-x) > 8px
+                                            || abs(self.mouse-y - self.drag-press-y) > 8px) {
+                                            self.drag-armed = false;
+                                            root.drag-start(row.index, ax, ay, e.modifiers.control);
+                                        }
+                                    }
+                                    if (e.kind == PointerEventKind.move && root.dragging) {
+                                        root.drag-move(ax, ay, e.modifiers.control);
+                                    }
+                                    if (e.kind == PointerEventKind.up) {
+                                        self.drag-armed = false;
+                                        if (root.dragging) {
+                                            root.drag-drop(ax, ay, e.modifiers.control);
+                                        }
+                                    }
+                                    if (e.kind == PointerEventKind.cancel) {
+                                        self.drag-armed = false;
+                                        if (root.dragging) { root.drag-cancel(); }
+                                    }
+                                    if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) {
+                                        root.row-context-menu(row.index, ax, ay);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Bắt click vào khoảng trống dưới danh sách.
+                        Rectangle {
+                            height: 8px;
+                            background: transparent;
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.activated(); root.background-clicked(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Vùng thả ----
+    if root.drop-target: Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        border-width: 2px;
+        border-color: Theme.accent;
+        background: Theme.accent-subtle;
+        Text {
+            text: "Thả vào thư mục này";
+            color: Theme.accent;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-semibold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

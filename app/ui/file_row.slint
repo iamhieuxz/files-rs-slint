@@ -1,0 +1,26 @@
+// Dữ liệu một dòng/tile trong danh sách tệp.
+export struct FileRow {
+    name: string,
+    path: string,
+    is-dir: bool,
+    is-hidden: bool,
+    selected: bool,
+    size: string,
+    modified: string,
+    kind: string,
+    // Thẻ màu đầu tiên của mục, để cột "Thẻ" đọc ra ngay.
+    has-tag: bool,
+    tag-name: string,
+    tag-color: color,
+    icon: string,
+    glyph: color,
+    // Chữ cái trạng thái git (U/M/S/D/!), rỗng khi không có hoặc không phải repo.
+    git-letter: string,
+    git-color: color,
+    // Icon thật của Windows (exe, msi, lnk…). Rỗng thì dùng `icon` + `glyph`.
+    icon-image: image,
+    has-icon-image: bool,
+    // Vị trí trong danh sách đang hiển thị; cần cho grid vì ở đó mỗi ô
+    // không còn chỉ số dòng như trong vòng lặp for row[i].
+    index: int,
+}

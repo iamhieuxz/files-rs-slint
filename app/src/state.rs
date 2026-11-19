@@ -1,4 +1,4 @@
-//! Application state.
+﻿//! Application state.
 //!
 //! Two structures: [`Tab`] owns everything one tab is looking at, [`App`] owns
 //! the tabs and the process-wide choices (theme, panels, clipboard, tag store).
@@ -8,15 +8,74 @@
 //! need. That keeps the dependency direction one-way — `state` depends on
 //! nothing of the UI.
 
-use files_core::sort::ListOptions;
-use files_core::{Entry, SortSpec};
 use crate::history::History;
 use crate::ops_worker::{JobDone, Worker};
+use files_core::sort::ListOptions;
+use files_core::{Entry, SortSpec};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
+use std::time::Instant;
 
 use crate::slint_generated::*;
 use crate::{logging, settings, tags};
+
+/// Which of the two file panes owns the address bar, command bar and keyboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pane {
+    Left,
+    Right,
+}
+
+impl Pane {
+    pub fn index(self) -> usize {
+        match self {
+            Pane::Left => 0,
+            Pane::Right => 1,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Pane::Left => "left",
+            Pane::Right => "right",
+        }
+    }
+}
+
+/// Load generation for one pane. Tokens are unique across both panes.
+#[derive(Clone, Copy, Default)]
+pub struct PaneLoad {
+    pub token: u64,
+    pub in_flight: bool,
+}
+
+/// Rectangle in Slint logical window coordinates.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Rect {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x <= self.x + self.w && y >= self.y && y <= self.y + self.h
+    }
+}
+
+#[derive(Default)]
+pub struct DragState {
+    pub source: Option<Pane>,
+    pub paths: Vec<PathBuf>,
+    pub copy: bool,
+    pub pane_bounds: [Option<Rect>; 2],
+    pub sidebar_zones: Vec<(String, Rect)>,
+    /// Đích của lần DragMove gần nhất, để lúc thả dùng đúng vùng người dùng
+    /// đang thấy sáng — không hit-test lại sau khi overlay biến mất.
+    pub hover_pane: Option<Pane>,
+    pub hover_sidebar: Option<String>,
+}
 
 /// Everything one tab owns.
 pub struct Tab {
@@ -87,6 +146,13 @@ impl Tab {
 pub struct App {
     pub tabs: Vec<Tab>,
     pub active: usize,
+    /// Pane phải của chế độ hai khung. `None` = đang ở chế độ một khung.
+    pub right: Option<Tab>,
+    /// Khung đang nhận lệnh từ toolbar, address bar và bàn phím.
+    pub active_pane: Pane,
+    /// Token tải riêng cho từng khung: hai khung có thể tải song song.
+    pub loads: [PaneLoad; 2],
+    pub next_load_token: u64,
     pub show_hidden: bool,
     pub show_sidebar: bool,
     pub show_preview: bool,
@@ -94,13 +160,10 @@ pub struct App {
     pub dark: bool,
     pub clipboard: Vec<PathBuf>,
     pub clipboard_cut: bool,
-    /// Bumped on every navigation so a stale listing reply is ignored.
-    pub load_token: u64,
-    /// True while a directory read is in flight, so the watcher cannot stack
-    /// another reload on top of it.
-    pub load_in_flight: bool,
-    /// Width available to the file list, so the grid can pick a column count.
+    /// Width available to the left file list, so the grid can pick a column count.
     pub grid_width: f32,
+    /// Bề rộng khung phải, để chia lưới theo đúng bề rộng của khung đó.
+    pub right_grid_width: f32,
     pub worker: Worker,
     pub results: Receiver<JobDone>,
     /// Paths whose change should trigger a refresh, from the directory watcher.
@@ -123,19 +186,69 @@ pub struct App {
     pub undo: crate::undo::UndoStack,
     /// Trạng thái git của thư mục đang xem, đọc một lần khi mở thư mục.
     pub git_status: files_fs::StatusMap,
+    /// Ứng dụng Shell đề xuất cho tệp đang mở menu chuột phải.
+    pub open_with: Vec<files_fs::OpenWithApp>,
+    /// Thời điểm bắt đầu thao tác dài, để thẻ tiến trình đếm giây.
+    pub operation_started: Option<Instant>,
+    /// Trạng thái kéo-thả nội bộ và vùng thả do UI báo lên.
+    pub drag: DragState,
 }
 
 impl App {
+    pub fn tab_for(&self, pane: Pane) -> Option<&Tab> {
+        match pane {
+            Pane::Left => Some(&self.tabs[self.active]),
+            Pane::Right => self.right.as_ref(),
+        }
+    }
+
+    pub fn tab_for_mut(&mut self, pane: Pane) -> Option<&mut Tab> {
+        match pane {
+            Pane::Left => Some(&mut self.tabs[self.active]),
+            Pane::Right => self.right.as_mut(),
+        }
+    }
+
     pub fn tab(&self) -> &Tab {
-        &self.tabs[self.active]
+        self.tab_for(self.active_pane)
+            .unwrap_or(&self.tabs[self.active])
     }
 
     pub fn tab_mut(&mut self) -> &mut Tab {
+        if self.active_pane == Pane::Right {
+            if let Some(tab) = self.right.as_mut() {
+                return tab;
+            }
+        }
         &mut self.tabs[self.active]
     }
 
+    pub fn pane_load(&self, pane: Pane) -> PaneLoad {
+        self.loads[pane.index()]
+    }
+
+    pub fn pane_load_mut(&mut self, pane: Pane) -> &mut PaneLoad {
+        &mut self.loads[pane.index()]
+    }
+
+    /// Token mới, duy nhất cho cả hai khung.
+    pub fn next_token(&mut self) -> u64 {
+        self.next_load_token = self.next_load_token.wrapping_add(1);
+        if self.next_load_token == 0 {
+            self.next_load_token = 1;
+        }
+        self.next_load_token
+    }
+
+    pub fn is_dual(&self) -> bool {
+        self.right.is_some()
+    }
+
     pub fn list_options(&self) -> ListOptions {
-        ListOptions { show_hidden: self.show_hidden, show_dotfiles: self.show_hidden }
+        ListOptions {
+            show_hidden: self.show_hidden,
+            show_dotfiles: self.show_hidden,
+        }
     }
 }
 
@@ -196,40 +309,73 @@ pub fn apply_saved_ui(ui: &AppWindow, app: &App) {
     ui.set_show_preview(app.show_preview);
     ui.set_show_hidden(app.show_hidden);
     ui.set_folders_first(app.folders_first);
+    ui.set_column_order(crate::view::column_order_model(&app.settings.column_order));
+    let width = |id: &str| {
+        app.settings
+            .column_widths
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| settings::column_default_width(id)) as f32
+    };
+    ui.set_col_name_width(width("name"));
+    ui.set_col_tag_width(width("tag"));
+    ui.set_col_modified_width(width("modified"));
+    ui.set_col_kind_width(width("kind"));
+    ui.set_col_size_width(width("size"));
 }
 
 /// Write the current preferences to disk.
 ///
 /// Called after every change; a failed write is logged but never blocks the UI —
 /// losing a preference is annoying, crashing on it is worse.
-pub fn save_settings(app: &std::rc::Rc<std::cell::RefCell<App>>) {
-    let (path, snapshot) = {
-        let a = app.borrow();
-        (a.settings_path.clone(), a.settings.clone())
+fn snapshot_for_save(app: &std::rc::Rc<std::cell::RefCell<App>>) -> (PathBuf, settings::Settings) {
+    let a = app.borrow();
+    let snapshot = settings::Settings {
+        dark: a.dark,
+        view_mode: a.view_mode,
+        show_sidebar: a.show_sidebar,
+        show_preview: a.show_preview,
+        show_hidden: a.show_hidden,
+        show_extensions: a.show_extensions,
+        folders_first: a.folders_first,
+        pinned_folders: a.settings.pinned_folders.clone(),
+        column_order: a.settings.column_order.clone(),
+        column_widths: a.settings.column_widths.clone(),
     };
-    if let Err(e) = snapshot.save(&path) {
+    (a.settings_path.clone(), snapshot)
+}
+
+fn write_settings(
+    app: &std::rc::Rc<std::cell::RefCell<App>>,
+    path: &Path,
+    merged: settings::Settings,
+) {
+    app.borrow_mut().settings = merged.clone();
+    if let Err(e) = merged.save(path) {
         logging::write(&format!("không lưu được giao diện: {e}"));
     }
 }
 
-/// Copy the live `App` fields into the settings snapshot, then save.
+/// Copy the live `App` UI fields into the settings snapshot, then save.
+///
+/// Pins are taken from the file: another window may have added some, and this
+/// window's snapshot would otherwise erase them.
 pub fn persist_ui(app: &std::rc::Rc<std::cell::RefCell<App>>) {
-    {
-        let mut a = app.borrow_mut();
-        let s = settings::Settings {
-            dark: a.dark,
-            view_mode: a.view_mode,
-            show_sidebar: a.show_sidebar,
-            show_preview: a.show_preview,
-            show_hidden: a.show_hidden,
-            show_extensions: a.show_extensions,
-            folders_first: a.folders_first,
-            // Giữ danh sách ghim đã có: hàm này chỉ đồng bộ phần giao diện.
-            pinned_folders: a.settings.pinned_folders.clone(),
-        };
-        a.settings = s;
-    }
-    save_settings(app);
+    let (path, current) = snapshot_for_save(app);
+    let merged = settings::Settings::load(&path).with_ui_from(&current);
+    write_settings(app, &path, merged);
+}
+
+/// Save a pin change.
+///
+/// The caller refreshed `pinned_folders` from disk before toggling, so this
+/// writes the file's other preferences untouched and only replaces the list.
+pub fn persist_pins(app: &std::rc::Rc<std::cell::RefCell<App>>) {
+    let (path, current) = snapshot_for_save(app);
+    let merged = settings::Settings::load(&path)
+        .with_ui_from(&current)
+        .with_pins_from(&current);
+    write_settings(app, &path, merged);
 }
 
 #[cfg(test)]
@@ -248,11 +394,7 @@ mod tests {
     #[test]
     fn filtering_narrows_visible_rows() {
         let mut tab = Tab::new(PathBuf::from("C:\\"));
-        tab.entries = vec![
-            entry("BaoCao.txt"),
-            entry("anh.png"),
-            entry("baoCao2.txt"),
-        ];
+        tab.entries = vec![entry("BaoCao.txt"), entry("anh.png"), entry("baoCao2.txt")];
         tab.rebuild_visible();
         assert_eq!(tab.visible.len(), 3);
 

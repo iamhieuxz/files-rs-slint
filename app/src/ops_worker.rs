@@ -11,10 +11,15 @@
 use files_core::sort::ListOptions;
 use files_core::{FsError, Listing, SortSpec};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
+
+mod progress;
+pub use progress::Progress;
+
+#[cfg(test)]
+mod tests;
 
 /// One unit of background work.
 pub enum Job {
@@ -76,12 +81,6 @@ pub enum Job {
         dir: PathBuf,
         token: u64,
     },
-    /// Tạo ảnh thu nhỏ cho một tệp ảnh.
-    Thumbnail {
-        path: PathBuf,
-        size: u32,
-        token: u64,
-    },
     /// Xoay ảnh 90° và ghi đè.
     Rotate {
         paths: Vec<PathBuf>,
@@ -97,6 +96,14 @@ pub enum Job {
     /// Delete without the Recycle Bin (Shift+Delete).
     DeletePermanent {
         paths: Vec<PathBuf>,
+    },
+    /// Apply the inverse of an action off the UI thread.
+    Undo {
+        action: crate::undo::UndoAction,
+    },
+    /// Re-apply an action after an undo.
+    Redo {
+        action: crate::undo::UndoAction,
     },
 }
 
@@ -147,71 +154,12 @@ pub enum JobDone {
         icon: files_fs::RgbaIcon,
         token: u64,
     },
-}
-
-/// Tiến trình của thao tác đang chạy, chia sẻ giữa UI và luồng worker.
-///
-/// UI đọc bằng cách hỏi theo nhịp (`snapshot`) chứ không nhận thông điệp cho
-/// từng tệp: một thư mục 10.000 tệp sẽ làm ngập kênh kết quả, và UI chỉ cần
-/// vẽ lại vài chục lần mỗi giây là đủ.
-///
-/// `total == 0` nghĩa là không có thao tác nào đang chạy.
-pub struct Progress {
-    total: AtomicUsize,
-    done: AtomicUsize,
-    cancel: AtomicBool,
-}
-
-impl Default for Progress {
-    fn default() -> Self {
-        Self {
-            total: AtomicUsize::new(0),
-            done: AtomicUsize::new(0),
-            cancel: AtomicBool::new(false),
-        }
-    }
-}
-
-impl Progress {
-    /// Bắt đầu một thao tác gồm `total` mục.
-    pub fn begin(&self, total: usize) {
-        self.done.store(0, Ordering::Relaxed);
-        self.cancel.store(false, Ordering::Relaxed);
-        // Đặt `total` SAU cùng: UI thấy total khác 0 là biết thao tác đã bắt đầu,
-        // và lúc đó `done`/`cancel` đã ở trạng thái đúng.
-        self.total.store(total, Ordering::Release);
-    }
-
-    /// Đánh dấu xong một mục.
-    pub fn tick(&self) {
-        self.done.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Kết thúc thao tác (thành công, lỗi, hoặc bị huỷ).
-    pub fn finish(&self) {
-        self.total.store(0, Ordering::Release);
-        self.done.store(0, Ordering::Relaxed);
-        self.cancel.store(false, Ordering::Relaxed);
-    }
-
-    /// Người dùng bấm Huỷ. Thao tác dừng ở ranh giới tệp kế tiếp.
-    pub fn request_cancel(&self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-
-    /// Đã được yêu cầu huỷ chưa. Worker hỏi trước mỗi tệp.
-    pub fn cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed)
-    }
-
-    /// `Some((đã xong, tổng))` khi có thao tác đang chạy.
-    pub fn snapshot(&self) -> Option<(usize, usize)> {
-        let total = self.total.load(Ordering::Acquire);
-        if total == 0 {
-            return None;
-        }
-        Some((self.done.load(Ordering::Relaxed), total))
-    }
+    /// Kết quả hoàn tác/làm lại; UI dời action giữa hai ngăn xếp khi thành công.
+    UndoDone {
+        action: crate::undo::UndoAction,
+        redo: bool,
+        result: Result<(), FsError>,
+    },
 }
 
 pub struct Worker {
@@ -231,8 +179,43 @@ pub struct Worker {
 
 /// Best-effort work that only decorates the list.
 pub enum AuxJob {
-    Size { path: PathBuf, token: u64 },
-    Icon { path: PathBuf, size: u32, token: u64 },
+    Size {
+        path: PathBuf,
+        token: u64,
+    },
+    Icon {
+        path: PathBuf,
+        size: u32,
+        token: u64,
+    },
+    Thumbnail {
+        path: PathBuf,
+        size: u32,
+        token: u64,
+    },
+}
+
+/// Run one decoration job. `None` means "nothing worth telling the UI".
+///
+/// Failures are deliberately silent: a corrupt image or an unreadable icon must
+/// not look like a file operation, because the result pump would reload the
+/// folder and queue the same failing job again — an endless refresh loop.
+fn run_aux(job: AuxJob) -> Option<JobDone> {
+    match job {
+        AuxJob::Size { path, token } => Some(JobDone::FolderSize {
+            bytes: files_fs::directory_size(&path),
+            path,
+            token,
+        }),
+        AuxJob::Icon { path, size, token } => files_fs::shell_icon(&path, size)
+            .ok()
+            .flatten()
+            .map(|icon| JobDone::ShellIcon { path, icon, token }),
+        AuxJob::Thumbnail { path, size, token } => files_fs::thumbnail_cached(&path, size)
+            .ok()
+            .flatten()
+            .map(|image| JobDone::Thumbnail { path, image, token }),
+    }
 }
 
 impl Worker {
@@ -267,19 +250,8 @@ impl Worker {
             .name("files-bg".into())
             .spawn(move || {
                 while let Ok(job) = aux_rx.recv() {
-                    let done = match job {
-                        AuxJob::Size { path, token } => JobDone::FolderSize {
-                            bytes: files_fs::directory_size(&path),
-                            path,
-                            token,
-                        },
-                        AuxJob::Icon { path, size, token } => {
-                            match files_fs::shell_icon(&path, size) {
-                                Ok(Some(icon)) => JobDone::ShellIcon { path, icon, token },
-                                // No icon is not an error: the row keeps its glyph.
-                                Ok(None) | Err(_) => continue,
-                            }
-                        }
+                    let Some(done) = run_aux(job) else {
+                        continue;
                     };
                     if aux_done.send(done).is_err() {
                         break;
@@ -287,7 +259,14 @@ impl Worker {
                 }
             })?;
 
-        Ok((Self { tx: job_tx, aux_tx, progress }, done_rx))
+        Ok((
+            Self {
+                tx: job_tx,
+                aux_tx,
+                progress,
+            },
+            done_rx,
+        ))
     }
 
     pub fn submit(&self, job: Job) {
@@ -310,59 +289,91 @@ impl Worker {
     pub fn submit_icon(&self, path: PathBuf, size: u32, token: u64) {
         let _ = self.aux_tx.send(AuxJob::Icon { path, size, token });
     }
+
+    /// Queue an image thumbnail. Decoration work stays off the operation queue
+    /// so a folder of photos cannot delay a rename or a paste.
+    pub fn submit_thumbnail(&self, path: PathBuf, size: u32, token: u64) {
+        let _ = self.aux_tx.send(AuxJob::Thumbnail { path, size, token });
+    }
 }
 
 fn run(job: Job, progress: &Progress) -> JobDone {
     match job {
-        Job::Load { path, sort, opts, token } => {
+        Job::Load {
+            path,
+            sort,
+            opts,
+            token,
+        } => {
             let result = files_fs::read_dir(&path, sort, opts);
-            JobDone::Loaded { token, path, result }
+            JobDone::Loaded {
+                token,
+                path,
+                result,
+            }
         }
-        Job::Copy { sources, target, policy } => {
-            let (created, err, cancelled) =
-                run_batch(&sources, progress, |src| {
-                    files_fs::copy_into_with(src, &target, policy)
-                });
+        Job::Copy {
+            sources,
+            target,
+            policy,
+        } => {
+            let (done, err, cancelled) = run_batch(&sources, progress, |src| {
+                files_fs::copy_into_with(src, &target, policy)
+            });
+            let count = done.len();
             let label = if cancelled {
-                format!("Đã huỷ sau {}/{} mục", created.len(), sources.len())
+                format!("Đã huỷ sau {count}/{} mục", sources.len())
             } else {
                 match &err {
                     Some(e) => format!("Sao chép lỗi: {}", e.message),
-                    None => format!("Đã sao chép {}/{} mục", created.len(), sources.len()),
+                    None => format!("Đã sao chép {count}/{} mục", sources.len()),
                 }
             };
-            let undo = created.is_empty().then_some(()).map_or(
+            // Chỉ ghi những nguồn thật sự đã chép được, theo đúng cặp của nó:
+            // làm lại sau một batch lỗi một phần không được chép lại mục đã lỗi.
+            let (sources_done, created): (Vec<_>, Vec<_>) = done.into_iter().unzip();
+            let undo = if created.is_empty() {
+                None
+            } else {
                 Some(crate::undo::UndoAction::Copied {
-                    sources: sources.clone(),
+                    sources: sources_done,
                     created,
                     target,
-                }),
-                |_| None,
-            );
-            JobDone::OpDone { label, result: err.map_or(Ok(()), Err), undo }
+                })
+            };
+            JobDone::OpDone {
+                label,
+                result: err.map_or(Ok(()), Err),
+                undo,
+            }
         }
-        Job::Move { sources, target, policy } => {
-            let (created, err, cancelled) =
-                run_batch(&sources, progress, |src| {
-                    files_fs::move_into_with(src, &target, policy)
-                });
+        Job::Move {
+            sources,
+            target,
+            policy,
+        } => {
+            let (pairs, err, cancelled) = run_batch(&sources, progress, |src| {
+                files_fs::move_into_with(src, &target, policy)
+            });
+            let count = pairs.len();
             let label = if cancelled {
-                format!("Đã huỷ sau {}/{} mục", created.len(), sources.len())
+                format!("Đã huỷ sau {count}/{} mục", sources.len())
             } else {
                 match &err {
                     Some(e) => format!("Di chuyển lỗi: {}", e.message),
-                    None => format!("Đã di chuyển {}/{} mục", created.len(), sources.len()),
+                    None => format!("Đã di chuyển {count}/{} mục", sources.len()),
                 }
             };
-            // Ghép nguồn với đích theo đúng thứ tự đã di chuyển thành công.
-            let pairs: Vec<(PathBuf, PathBuf)> =
-                sources.iter().cloned().zip(created.iter().cloned()).collect();
             let undo = if pairs.is_empty() {
                 None
             } else {
                 Some(crate::undo::UndoAction::Moved { pairs })
             };
-            JobDone::OpDone { label, result: err.map_or(Ok(()), Err), undo }
+            JobDone::OpDone {
+                label,
+                result: err.map_or(Ok(()), Err),
+                undo,
+            }
         }
         Job::Delete { paths } => {
             let n = paths.len();
@@ -385,22 +396,36 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 Ok(p) => (
                     format!("Đã tạo thư mục {}", file_label(&p)),
                     Ok(()),
-                    Some(crate::undo::UndoAction::Created { path: p, is_dir: true }),
+                    Some(crate::undo::UndoAction::Created {
+                        path: p,
+                        is_dir: true,
+                    }),
                 ),
                 Err(e) => (format!("Tạo thư mục lỗi: {}", e.message), Err(e), None),
             };
-            JobDone::OpDone { label, result, undo }
+            JobDone::OpDone {
+                label,
+                result,
+                undo,
+            }
         }
         Job::CreateFile { parent, name } => {
             let (label, result, undo) = match files_fs::create_file(&parent, &name) {
                 Ok(p) => (
                     format!("Đã tạo tệp {}", file_label(&p)),
                     Ok(()),
-                    Some(crate::undo::UndoAction::Created { path: p, is_dir: false }),
+                    Some(crate::undo::UndoAction::Created {
+                        path: p,
+                        is_dir: false,
+                    }),
                 ),
                 Err(e) => (format!("Tạo tệp lỗi: {}", e.message), Err(e), None),
             };
-            JobDone::OpDone { label, result, undo }
+            JobDone::OpDone {
+                label,
+                result,
+                undo,
+            }
         }
         Job::Rename { from, to } => {
             let (label, result, undo) = match files_fs::rename(&from, &to) {
@@ -411,7 +436,11 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 ),
                 Err(e) => (format!("Đổi tên lỗi: {}", e.message), Err(e), None),
             };
-            JobDone::OpDone { label, result, undo }
+            JobDone::OpDone {
+                label,
+                result,
+                undo,
+            }
         }
         Job::Zip { sources, dest } => {
             let (label, result) = match files_fs::create_zip(&sources, &dest) {
@@ -421,7 +450,11 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 ),
                 Err(e) => (format!("Nén lỗi: {}", e.message), Err(e)),
             };
-            JobDone::OpDone { label, result, undo: None }
+            JobDone::OpDone {
+                label,
+                result,
+                undo: None,
+            }
         }
         Job::Unzip { archive, target } => {
             let (label, result) = match files_fs::extract_zip(&archive, &target) {
@@ -431,31 +464,28 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 ),
                 Err(e) => (format!("Giải nén lỗi: {}", e.message), Err(e)),
             };
-            JobDone::OpDone { label, result, undo: None }
+            JobDone::OpDone {
+                label,
+                result,
+                undo: None,
+            }
         }
         Job::Hash { path, kind } => {
             let (label, result) = match files_fs::hash_file(&path, kind) {
                 Ok(digest) => (format!("{}: {digest}", kind.label()), Ok(())),
                 Err(e) => (format!("Tính mã băm lỗi: {}", e.message), Err(e)),
             };
-            JobDone::OpDone { label, result, undo: None }
+            JobDone::OpDone {
+                label,
+                result,
+                undo: None,
+            }
         }
         Job::GitStatus { dir, token } => {
             // `git status` trên một repo lớn có thể mất vài trăm ms; chạy ở
             // luồng nền nên UI không bị treo.
             let status = files_fs::status_for(&dir);
             JobDone::GitStatus { dir, status, token }
-        }
-        Job::Thumbnail { path, size, token } => {
-            match files_fs::thumbnail(&path, size) {
-                Ok(Some(image)) => JobDone::Thumbnail { path, image, token },
-                // Không có ảnh thu nhỏ không phải lỗi: dòng giữ icon loại tệp.
-                Ok(None) | Err(_) => JobDone::OpDone {
-                    label: String::new(),
-                    result: Ok(()),
-                    undo: None,
-                },
-            }
         }
         Job::Rotate { paths } => {
             progress.begin(paths.len());
@@ -480,21 +510,45 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 Some(e) => format!("Xoay ảnh lỗi: {}", e.message),
                 None => format!("Đã xoay {done}/{} ảnh", paths.len()),
             };
-            JobDone::OpDone { label, result: first_err.map_or(Ok(()), Err), undo: None }
+            JobDone::OpDone {
+                label,
+                result: first_err.map_or(Ok(()), Err),
+                undo: None,
+            }
         }
-        Job::Search { root, query, max_depth, limit, token } => {
-            let opts = files_fs::SearchOptions { query, max_depth, limit };
-            // Tìm kiếm không huỷ được ở đây: nó chạy trên luồng thao tác nên
-            // không được chiếm chỗ lâu. Giới hạn độ sâu và số kết quả là chốt chặn.
+        Job::Search {
+            root,
+            query,
+            max_depth,
+            limit,
+            token,
+        } => {
+            let opts = files_fs::SearchOptions {
+                query,
+                max_depth,
+                limit,
+            };
+            // Không biết trước số mục sẽ quét, nhưng UI vẫn phải biết là có
+            // việc đang chạy để hiện nút Huỷ — người dùng huỷ được giữa chừng.
+            progress.begin_indeterminate();
             let (hits, cancelled) = files_fs::search(&root, &opts, || progress.cancelled());
             progress.finish();
-            JobDone::SearchDone { token, root, hits, cancelled }
+            JobDone::SearchDone {
+                token,
+                root,
+                hits,
+                cancelled,
+            }
         }
         Job::FolderSize { path } => {
             // Explicit "tính kích thước" from the menu; token 0 never matches a
             // live listing, so the reply is applied by the manual path only.
             let bytes = files_fs::directory_size(&path);
-            JobDone::FolderSize { path, bytes, token: 0 }
+            JobDone::FolderSize {
+                path,
+                bytes,
+                token: 0,
+            }
         }
         Job::DeletePermanent { paths } => {
             let n = paths.len();
@@ -512,6 +566,16 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 },
             }
         }
+        Job::Undo { action } => JobDone::UndoDone {
+            result: crate::undo::undo(&action),
+            action,
+            redo: false,
+        },
+        Job::Redo { action } => JobDone::UndoDone {
+            result: crate::undo::redo(&action),
+            action,
+            redo: true,
+        },
     }
 }
 
@@ -521,16 +585,21 @@ fn run(job: Job, progress: &Progress) -> JobDone {
 /// Trả về cả đường dẫn đích: hoàn tác cần biết chính xác cái gì đã được tạo.
 /// Mục đã xong trước khi huỷ vẫn nằm trong danh sách trả về — người dùng phải
 /// hoàn tác được đúng những gì đã thực sự xảy ra.
+/// Apply `op` to each source, counting successes and keeping the first error.
+/// Áp `op` lên từng nguồn, báo tiến trình và dừng khi bị huỷ.
+///
+/// Trả về cặp (nguồn, đích) của những mục đã xong: hoàn tác/làm lại cần biết
+/// chính xác cái gì đã xảy ra, kể cả khi batch có mục lỗi bị bỏ qua.
 fn run_batch<F>(
     sources: &[PathBuf],
     progress: &Progress,
     mut op: F,
-) -> (Vec<PathBuf>, Option<FsError>, bool)
+) -> (Vec<(PathBuf, PathBuf)>, Option<FsError>, bool)
 where
     F: FnMut(&PathBuf) -> Result<PathBuf, FsError>,
 {
     progress.begin(sources.len());
-    let mut created = Vec::new();
+    let mut done = Vec::new();
     let mut first_err = None;
     let mut cancelled = false;
     for src in sources {
@@ -540,7 +609,7 @@ where
             break;
         }
         match op(src) {
-            Ok(dest) => created.push(dest),
+            Ok(dest) => done.push((src.clone(), dest)),
             Err(e) => {
                 if first_err.is_none() {
                     first_err = Some(e);
@@ -550,150 +619,11 @@ where
         progress.tick();
     }
     progress.finish();
-    (created, first_err, cancelled)
+    (done, first_err, cancelled)
 }
 
 fn file_label(p: &std::path::Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| p.display().to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    fn scratch(name: &str) -> PathBuf {
-        let exe = std::env::current_exe().expect("đường dẫn exe");
-        let dir = exe
-            .parent()
-            .expect("thư mục chứa exe")
-            .join("test-scratch")
-            .join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("tạo thư mục tạm");
-        dir
-    }
-
-    #[test]
-    fn a_fresh_progress_reports_nothing_running() {
-        let p = Progress::default();
-        assert_eq!(p.snapshot(), None);
-    }
-
-    #[test]
-    fn begin_makes_a_snapshot_available() {
-        let p = Progress::default();
-        p.begin(5);
-        assert_eq!(p.snapshot(), Some((0, 5)));
-    }
-
-    #[test]
-    fn ticks_move_the_counter_and_stop_at_the_total() {
-        let p = Progress::default();
-        p.begin(3);
-        p.tick();
-        assert_eq!(p.snapshot(), Some((1, 3)));
-        p.tick();
-        p.tick();
-        assert_eq!(p.snapshot(), Some((3, 3)), "không vượt quá tổng");
-    }
-
-    #[test]
-    fn finish_clears_the_snapshot() {
-        let p = Progress::default();
-        p.begin(2);
-        p.tick();
-        p.finish();
-        assert_eq!(p.snapshot(), None);
-    }
-
-    #[test]
-    fn finish_also_resets_a_pending_cancel() {
-        // Nếu không xoá cờ, thao tác SAU sẽ bị huỷ ngay từ tệp đầu tiên.
-        let p = Progress::default();
-        p.begin(2);
-        p.request_cancel();
-        assert!(p.cancelled());
-        p.finish();
-        assert!(!p.cancelled(), "cờ huỷ phải được xoá khi kết thúc");
-    }
-
-    #[test]
-    fn begin_clears_a_stale_cancel_from_the_previous_run() {
-        let p = Progress::default();
-        p.begin(2);
-        p.request_cancel();
-        p.begin(2);
-        assert!(!p.cancelled(), "lần chạy mới không được thừa hưởng cờ cũ");
-    }
-
-    #[test]
-    fn cancelling_a_batch_stops_after_the_current_file() {
-        let root = scratch("cancel-batch");
-        let target = root.join("dich");
-        std::fs::create_dir_all(&target).unwrap();
-        let sources: Vec<PathBuf> = (0..5)
-            .map(|i| {
-                let p = root.join(format!("tep{i}.txt"));
-                std::fs::write(&p, b"x").unwrap();
-                p
-            })
-            .collect();
-
-        let p = Progress::default();
-        // Huỷ ngay sau tệp đầu tiên.
-        let p2 = &p;
-        let (created, err, cancelled) = run_batch(&sources, p2, |src| {
-            let r = files_fs::copy_into(src, &target);
-            p2.request_cancel();
-            r
-        });
-
-        assert!(cancelled, "phải báo là đã huỷ");
-        assert!(err.is_none(), "huỷ không phải lỗi");
-        assert_eq!(created.len(), 1, "dừng ngay sau tệp đang xử lý");
-        assert_eq!(
-            std::fs::read_dir(&target).unwrap().count(),
-            1,
-            "chỉ đúng một tệp được chép"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn a_completed_batch_reports_every_file() {
-        let root = scratch("full-batch");
-        let target = root.join("dich");
-        std::fs::create_dir_all(&target).unwrap();
-        let sources: Vec<PathBuf> = (0..3)
-            .map(|i| {
-                let p = root.join(format!("t{i}.txt"));
-                std::fs::write(&p, b"x").unwrap();
-                p
-            })
-            .collect();
-
-        let p = Progress::default();
-        let (created, err, cancelled) =
-            run_batch(&sources, &p, |src| files_fs::copy_into(src, &target));
-
-        assert!(!cancelled);
-        assert!(err.is_none());
-        assert_eq!(created.len(), 3);
-        assert_eq!(p.snapshot(), None, "kết thúc thì không còn tiến trình");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn the_worker_exposes_its_progress() {
-        // UI đọc tiến trình qua worker, nên accessor phải trả cùng một đối tượng.
-        let (worker, _rx) = Worker::spawn().expect("tạo worker");
-        assert_eq!(worker.progress().snapshot(), None);
-        worker.progress().begin(4);
-        assert_eq!(worker.progress().snapshot(), Some((0, 4)));
-        worker.progress().finish();
-        let _ = Duration::from_millis(1);
-    }
 }

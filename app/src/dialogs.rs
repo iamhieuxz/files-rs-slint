@@ -1,14 +1,14 @@
-﻿//! Dialog state and confirmation.
+//! Dialog state and confirmation.
 //!
 //! The UI has one reusable dialog surface; these functions decide its title,
 //! body, whether it needs a text box, and what to do when the user confirms.
 //! Keeping them together means the "which dialog is open" contract is in one
 //! place instead of spread across the callbacks.
 
+use crate::commands::{menu, register_association};
 use crate::slint_generated::*;
 use crate::state::App;
-use crate::commands::{menu, register_association};
-use crate::{format, logging, ops_worker, preview};
+use crate::{format, logging, operations, ops_worker, preview};
 use ops_worker::Job;
 use slint::{ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
@@ -86,7 +86,14 @@ pub fn ask_new(ui: &AppWindow, kind: &str) {
 /// Menu của nút "Mới" (phần mũi tên tách rời).
 pub fn show_new_menu(ui: &AppWindow, x: f32, y: f32) {
     let items = vec![
-        menu("new-folder", "Thư mục mới", "folder", "Ctrl+Shift+N", true, false),
+        menu(
+            "new-folder",
+            "Thư mục mới",
+            "folder",
+            "Ctrl+Shift+N",
+            true,
+            false,
+        ),
         menu("new-file", "Tệp văn bản mới", "document", "", true, false),
     ];
     ui.set_menu_items(ModelRc::new(VecModel::from(items)));
@@ -110,49 +117,56 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
         "rename" => {
             let from = {
                 let s = app.borrow();
-                s.tab().selected_entries().first().map(|e| PathBuf::from(&e.path))
+                s.tab()
+                    .selected_entries()
+                    .first()
+                    .map(|e| PathBuf::from(&e.path))
             };
             if let Some(from) = from {
-                app.borrow().worker.submit(Job::Rename { from, to: value.to_string() });
-                ui.set_busy(true);
-                ui.set_busy_text(SharedString::from("Đang đổi tên…"));
+                app.borrow().worker.submit(Job::Rename {
+                    from,
+                    to: value.to_string(),
+                });
+                operations::begin(ui, app, "Đang đổi tên…");
             }
         }
         "new-folder" => {
-            app.borrow().worker.submit(Job::CreateFolder { parent: current, name: value.to_string() });
-            ui.set_busy(true);
-            ui.set_busy_text(SharedString::from("Đang tạo thư mục…"));
+            app.borrow().worker.submit(Job::CreateFolder {
+                parent: current,
+                name: value.to_string(),
+            });
+            operations::begin(ui, app, "Đang tạo thư mục…");
         }
         "new-file" => {
-            app.borrow().worker.submit(Job::CreateFile { parent: current, name: value.to_string() });
-            ui.set_busy(true);
-            ui.set_busy_text(SharedString::from("Đang tạo tệp…"));
+            app.borrow().worker.submit(Job::CreateFile {
+                parent: current,
+                name: value.to_string(),
+            });
+            operations::begin(ui, app, "Đang tạo tệp…");
         }
         "confirm-delete" => {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {
                 app.borrow().worker.submit(Job::Delete { paths });
-                ui.set_busy(true);
-                ui.set_busy_text(SharedString::from("Đang chuyển vào Thùng rác…"));
+                operations::begin(ui, app, "Đang chuyển vào Thùng rác…");
             }
         }
         "confirm-default" => register_association(ui),
         // Nút chính của hộp thoại trùng tên là "Giữ cả hai".
-        "confirm-empty-bin" => {
-            match files_fs::empty_recycle_bin() {
-                Ok(()) => ui.set_status_tertiary(SharedString::from("Đã làm rỗng Thùng rác")),
-                Err(e) => {
-                    let text = format::explain_error(&e.code, &e.message);
-                    ui.set_error_text(SharedString::from(text.as_str()));
-                }
+        "confirm-empty-bin" => match files_fs::empty_recycle_bin() {
+            Ok(()) => ui.set_status_message(SharedString::from("Đã làm rỗng Thùng rác")),
+            Err(e) => {
+                let text = format::explain_error(&e.code, &e.message);
+                ui.set_error_text(SharedString::from(text.as_str()));
             }
-        }
+        },
         "confirm-rotate" => {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {
-                app.borrow().worker.submit(crate::ops_worker::Job::Rotate { paths });
-                ui.set_busy(true);
-                ui.set_busy_text(SharedString::from("Đang xoay ảnh…"));
+                app.borrow()
+                    .worker
+                    .submit(crate::ops_worker::Job::Rotate { paths });
+                operations::begin(ui, app, "Đang xoay ảnh…");
             }
         }
         "paste-conflict" => {
@@ -162,8 +176,7 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {
                 app.borrow().worker.submit(Job::DeletePermanent { paths });
-                ui.set_busy(true);
-                ui.set_busy_text(SharedString::from("Đang xoá vĩnh viễn…"));
+                operations::begin(ui, app, "Đang xoá vĩnh viễn…");
             }
         }
         _ => {}
@@ -172,6 +185,8 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
 
 pub fn show_properties(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let s = app.borrow();
-    let Some(entry) = s.tab().selected_entries().first().cloned() else { return };
+    let Some(entry) = s.tab().selected_entries().first().cloned() else {
+        return;
+    };
     preview::show(ui, entry);
 }

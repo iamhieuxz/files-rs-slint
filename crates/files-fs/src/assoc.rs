@@ -64,10 +64,7 @@ pub fn register(exe: &Path) -> Result<(), FsError> {
     let icon = icon_ref(&exe_str);
     let command = open_command(&exe_str);
 
-    for (progid, kind) in [
-        (FOLDER_PROGID, "Thư mục"),
-        (DRIVE_PROGID, "Ổ đĩa"),
-    ] {
+    for (progid, kind) in [(FOLDER_PROGID, "Thư mục"), (DRIVE_PROGID, "Ổ đĩa")] {
         let base = progid_key(progid);
         set_string(&format!(r"{base}\DefaultIcon"), "", &icon)?;
         set_string(&format!(r"{base}\shell\open\command"), "", &command)?;
@@ -83,14 +80,18 @@ pub fn register(exe: &Path) -> Result<(), FsError> {
     // Capabilities: danh sách loại nội dung app nhận mở.
     let caps = capabilities_key();
     set_string(&caps, "ApplicationName", "Files RS")?;
-    set_string(&caps, "ApplicationDescription", "Trình quản lý tệp cho Windows")?;
-    set_string(&format!(r"{caps}\FileAssociations"), ".zip", "CompressedFolder")?;
-    // Đăng ký khả năng để Windows hiện app trong "Choose a default".
     set_string(
-        r"Software\RegisteredApplications",
-        APP_NAME,
         &caps,
+        "ApplicationDescription",
+        "Trình quản lý tệp cho Windows",
     )?;
+    set_string(
+        &format!(r"{caps}\FileAssociations"),
+        ".zip",
+        "CompressedFolder",
+    )?;
+    // Đăng ký khả năng để Windows hiện app trong "Choose a default".
+    set_string(r"Software\RegisteredApplications", APP_NAME, &caps)?;
 
     notify_shell();
     Ok(())
@@ -169,17 +170,9 @@ fn set_string(key: &str, value: &str, data: &str) -> Result<(), FsError> {
                 format!("RegCreateKeyExW {key}: {rc:?}"),
             ));
         }
-        let bytes = std::slice::from_raw_parts(
-            wide_data.as_ptr() as *const u8,
-            wide_data.len() * 2,
-        );
-        let rc = RegSetValueExW(
-            hkey,
-            PCWSTR(wide_value.as_ptr()),
-            None,
-            REG_SZ,
-            Some(bytes),
-        );
+        let bytes =
+            std::slice::from_raw_parts(wide_data.as_ptr() as *const u8, wide_data.len() * 2);
+        let rc = RegSetValueExW(hkey, PCWSTR(wide_value.as_ptr()), None, REG_SZ, Some(bytes));
         // Đóng handle là dọn dẹp: lỗi ở đây không làm hỏng dữ liệu đã ghi,
         // nên chỉ ghi log, không trả lỗi.
         let close_rc = RegCloseKey(hkey);
@@ -208,9 +201,7 @@ fn delete_tree(key: &str) {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-    use windows::Win32::System::Registry::{
-        RegDeleteTreeW, HKEY_CURRENT_USER,
-    };
+    use windows::Win32::System::Registry::{RegDeleteTreeW, HKEY_CURRENT_USER};
 
     let wide: Vec<u16> = std::ffi::OsStr::new(key)
         .encode_wide()
@@ -233,9 +224,7 @@ fn delete_value(key: &str, value: &str) {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-    use windows::Win32::System::Registry::{
-        RegDeleteKeyValueW, HKEY_CURRENT_USER,
-    };
+    use windows::Win32::System::Registry::{RegDeleteKeyValueW, HKEY_CURRENT_USER};
 
     let wide_key: Vec<u16> = std::ffi::OsStr::new(key)
         .encode_wide()
@@ -309,7 +298,10 @@ mod tests {
     fn progid_keys_live_under_hkcu_classes() {
         let key = progid_key(FOLDER_PROGID);
         assert_eq!(key, r"Software\Classes\FilesRS.Folder");
-        assert!(key.starts_with(r"Software\Classes\"), "phải nằm dưới Classes");
+        assert!(
+            key.starts_with(r"Software\Classes\"),
+            "phải nằm dưới Classes"
+        );
         assert_eq!(progid_key(DRIVE_PROGID), r"Software\Classes\FilesRS.Drive");
     }
 

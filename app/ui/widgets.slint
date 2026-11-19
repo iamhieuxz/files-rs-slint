@@ -4,6 +4,7 @@
 // trạng thái Rest / PointerOver / Pressed / Selected / Disabled và đúng bán kính
 // bo góc của Fluent 2 (4px cho control, 7px cho khối nổi).
 
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { FluentIcon } from "icons.slint";
 
@@ -15,6 +16,12 @@ export component FluentButton inherits Rectangle {
     in property <bool> accent: false;
     in property <bool> show-label: true;
     callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.label != "" ? root.label : root.icon;
+    accessible-enabled: root.enabled;
+    // Screen reader / UIA cần action mặc định để bấm được nút, không chỉ đọc tên.
+    accessible-action-default => { if (root.enabled) { ta.clicked(); } }
 
     height: Theme.control-height;
     min-width: 32px;
@@ -72,6 +79,7 @@ export component IconButton inherits Rectangle {
     accessible-role: button;
     accessible-label: root.accessible-text != "" ? root.accessible-text : root.icon;
     accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { ta.clicked(); } }
 
     width: 32px;
     height: 32px;
@@ -104,6 +112,7 @@ export component IconButton inherits Rectangle {
 export component CommandButton inherits Rectangle {
     accessible-role: button;
     accessible-label: root.label != "" ? root.label : root.icon;
+    accessible-action-default => { if (root.enabled) { ta.clicked(); } }
     in property <string> label;
     in property <string> icon;
     in property <bool> enabled: true;
@@ -124,6 +133,7 @@ export component CommandButton inherits Rectangle {
         padding-right: root.split ? Theme.s1 : Theme.s3;
         spacing: Theme.s2;
         alignment: center;
+        cross-axis-alignment: center;
         FluentIcon {
             name: root.icon;
             width: 16px;
@@ -172,17 +182,39 @@ export component SidebarItem inherits Rectangle {
     in property <int> indent: 0;
     in property <bool> expandable: false;
     in property <bool> expanded: false;
+    // Đích thả tệp từ Explorer/khung khác và trạng thái rê lên mục này.
+    in property <string> drop-path;
+    in property <bool> drop-active: false;
     callback clicked();
     callback toggle-expanded();
+    callback geometry(string, length, length, length, length);
     accessible-role: button;
     accessible-label: root.label;
+    accessible-action-default => { ta.clicked(); }
 
-    height: 32px;
+    height: 36px;
     border-radius: Theme.r-sm;
-    background: root.active ? Theme.subtle-selected
+    border-width: root.drop-active ? 1px : 0px;
+    border-color: Theme.accent;
+    background: root.drop-active ? Theme.accent-subtle
+        : root.active ? Theme.subtle-selected
         : ta.has-hover ? Theme.subtle-hover
         : transparent;
     animate background { duration: 90ms; }
+
+    function report-geometry() {
+        root.geometry(
+            root.drop-path,
+            self.absolute-position.x,
+            self.absolute-position.y,
+            self.width,
+            self.height,
+        );
+    }
+    init => { root.report-geometry(); }
+    changed absolute-position => { root.report-geometry(); }
+    changed width => { root.report-geometry(); }
+    changed height => { root.report-geometry(); }
 
     // Thanh accent dọc: dấu hiệu "đang ở đây" của Fluent NavigationView.
     if root.active: Rectangle {
@@ -195,9 +227,9 @@ export component SidebarItem inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: Theme.s3 + root.indent * 16px;
+        padding-left: Theme.s3 + root.indent * 18px;
         padding-right: Theme.s2;
-        spacing: Theme.s2;
+        spacing: Theme.s3;
         alignment: start;
 
         if root.expandable: Rectangle {
@@ -217,8 +249,8 @@ export component SidebarItem inherits Rectangle {
 
         FluentIcon {
             name: root.icon;
-            width: 16px;
-            height: 16px;
+            width: 18px;
+            height: 18px;
             y: (parent.height - self.height) / 2;
             tint: root.glyph;
         }
@@ -245,12 +277,13 @@ export component TabItem inherits Rectangle {
     callback right-clicked();
     accessible-role: tab;
     accessible-label: root.label;
+    accessible-action-default => { ta.clicked(); }
 
     height: Theme.tab-height - 6px;
-    min-width: 150px;
+    min-width: 140px;
     max-width: 240px;
     border-radius: Theme.r-md;
-    background: root.active ? Theme.card
+    background: root.active ? Theme.tab-active
         : ta.has-hover ? Theme.subtle-hover
         : transparent;
     animate background { duration: 90ms; }
@@ -271,21 +304,23 @@ export component TabItem inherits Rectangle {
         padding-left: Theme.s3;
         padding-right: 30px;
         spacing: Theme.s2;
-        alignment: center;
+        // Tab giống Files: icon và chữ bám trái; khoảng trống dồn về phía nút đóng.
+        alignment: start;
 
         if root.icon != "": FluentIcon {
             name: root.icon;
-            width: 14px;
-            height: 14px;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
             tint: root.active ? Theme.accent : Theme.text-secondary;
         }
         Text {
             text: root.label;
             color: root.active ? Theme.text-primary : Theme.text-secondary;
-            font-size: Theme.font-caption;
+            font-size: Theme.font-body;
             vertical-alignment: center;
+            max-width: 170px;
             overflow: elide;
-            horizontal-stretch: 1;
         }
     }
 
@@ -318,6 +353,8 @@ export component FluentTextBox inherits Rectangle {
     in property <bool> read-only: false;
     callback accepted();
     callback edited(string);
+    // Esc trong ô nhập: dùng cho ô lọc, nơi Escape không bubble lên FocusScope.
+    callback cancelled();
 
     height: Theme.control-height;
     border-radius: Theme.r-sm;
@@ -332,13 +369,29 @@ export component FluentTextBox inherits Rectangle {
         border-radius: 1px;
         background: Theme.accent;
     }
+    // Placeholder: trước đây property tồn tại nhưng không được vẽ, nên ô search
+    // trông như một khung rỗng chỉ có icon.
+    if root.text == "": Text {
+        x: Theme.s3 + (root.leading-icon != "" ? 16px + Theme.s2 : 0px);
+        y: (parent.height - self.height) / 2;
+        width: parent.width - self.x - Theme.s3;
+        text: root.placeholder;
+        color: Theme.text-tertiary;
+        font-size: Theme.font-body;
+        vertical-alignment: center;
+        overflow: elide;
+    }
     animate border-color { duration: 100ms; }
 
     HorizontalLayout {
         padding-left: Theme.s3;
         padding-right: Theme.s3;
         spacing: Theme.s2;
-        alignment: center;
+        // stretch theo trục ngang để icon bám trái và input chiếm phần còn lại;
+        // cross-axis căn giữa theo chiều dọc. `alignment: center` trước đây
+        // căn icon ra giữa ô, lệch hẳn khỏi dòng chữ.
+        alignment: stretch;
+        cross-axis-alignment: center;
 
         if root.leading-icon != "": FluentIcon {
             name: root.leading-icon;
@@ -355,6 +408,13 @@ export component FluentTextBox inherits Rectangle {
             read-only: root.read-only;
             accepted => { root.accepted(); }
             edited => { root.edited(self.text); }
+            key-pressed(event) => {
+                if (event.text == Key.Escape) { root.cancelled(); return accept; }
+                reject
+            }
+            // Ô lọc chỉ được tạo khi người dùng bấm Ctrl+F: focus ngay để gõ
+            // được mà không phải click thêm.
+            init => { self.focus(); }
         }
     }
 }
@@ -424,14 +484,19 @@ export struct MenuItem {
     // vì Slint không cho đọc kênh alpha của `color`.
     dot: color,
     has-dot: bool,
+    // Nhãn nhóm (ví dụ "Thẻ màu", "Mở bằng"): hiển thị mờ, không bấm được.
+    header: bool,
+    // Mục mở menu con; vẽ chevron ở cuối.
+    submenu: bool,
 }
 
 export component MenuPopup inherits Rectangle {
     in property <[MenuItem]> items;
     callback activated(string);
 
-    width: 230px;
-    height: items.length * 30px + Theme.s2 * 2;
+    // Rộng hơn để nhãn + phím tắt không lọt ra ngoài; cao tối đa 480px rồi cuộn.
+    width: 300px;
+    height: min(items.length * 30px + Theme.s2 + Theme.s2, 480px);
     border-radius: Theme.r-md;
     background: Theme.solid-tertiary;
     border-width: 1px;
@@ -442,56 +507,150 @@ export component MenuPopup inherits Rectangle {
 
     VerticalLayout {
         padding: Theme.s1;
-        spacing: 0px;
-        for item[i] in root.items: Rectangle {
-            height: 30px;
-            border-radius: Theme.r-sm;
-            background: mi.has-hover && item.enabled && !item.separator ? Theme.subtle-hover : transparent;
-            if item.separator: Rectangle {
-                height: 1px;
-                width: parent.width - Theme.s2 * 2;
-                x: Theme.s2;
-                y: 14px;
-                background: Theme.stroke-divider;
-            }
-            if !item.separator: HorizontalLayout {
-                padding-left: Theme.s3;
-                padding-right: Theme.s2;
-                spacing: Theme.s2;
-                alignment: start;
-                if item.has-dot: Rectangle {
-                    width: 12px;
-                    height: 12px;
-                    border-radius: 6px;
-                    y: (parent.height - self.height) / 2;
-                    background: item.dot;
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                for item[i] in root.items: Rectangle {
+                    height: 30px;
+                    border-radius: Theme.r-sm;
+                    background: mi.has-hover && item.enabled && !item.separator && !item.header ? Theme.subtle-hover : transparent;
+                    if item.separator: Rectangle {
+                        height: 1px;
+                        width: parent.width - Theme.s2 * 2;
+                        x: Theme.s2;
+                        y: 14px;
+                        background: Theme.stroke-divider;
+                    }
+                    if !item.separator: HorizontalLayout {
+                        padding-left: Theme.s3;
+                        padding-right: Theme.s2;
+                        spacing: Theme.s2;
+                        alignment: stretch;
+                        if item.has-dot: Rectangle {
+                            width: 12px;
+                            height: 12px;
+                            border-radius: 6px;
+                            y: (parent.height - self.height) / 2;
+                            background: item.dot;
+                        }
+                        if item.icon != "": FluentIcon {
+                            name: item.icon;
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                            tint: item.enabled ? Theme.text-primary : Theme.text-disabled;
+                        }
+                        Text {
+                            text: item.label;
+                            color: item.header ? Theme.text-tertiary : (item.enabled ? Theme.text-primary : Theme.text-disabled);
+                            font-size: item.header ? Theme.font-caption : Theme.font-body;
+                            font-weight: item.header ? Theme.weight-semibold : Theme.weight-regular;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        if item.submenu: FluentIcon {
+                            name: "chevron_right";
+                            width: 12px;
+                            height: 12px;
+                            y: (parent.height - self.height) / 2;
+                            tint: item.enabled ? Theme.text-secondary : Theme.text-disabled;
+                        }
+                        if item.shortcut != "" && !item.header: Text {
+                            text: item.shortcut;
+                            color: Theme.text-tertiary;
+                            font-size: Theme.font-caption;
+                            vertical-alignment: center;
+                            horizontal-alignment: right;
+                            overflow: elide;
+                        }
+                    }
+                    mi := TouchArea {
+                        enabled: item.enabled && !item.separator && !item.header;
+                        clicked => { root.activated(item.id); }
+                    }
                 }
-                if item.icon != "": FluentIcon {
-                    name: item.icon;
-                    width: 16px;
-                    height: 16px;
-                    y: (parent.height - self.height) / 2;
-                    tint: item.enabled ? Theme.text-primary : Theme.text-disabled;
-                }
-                Text {
-                    text: item.label;
-                    color: item.enabled ? Theme.text-primary : Theme.text-disabled;
-                    font-size: Theme.font-body;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-                if item.shortcut != "": Text {
-                    text: item.shortcut;
-                    color: Theme.text-tertiary;
-                    font-size: Theme.font-caption;
-                    vertical-alignment: center;
-                }
-            }
-            mi := TouchArea {
-                enabled: item.enabled && !item.separator;
-                clicked => { root.activated(item.id); }
             }
         }
+    }
+}
+
+// ---- Nút điều khiển cửa sổ kiểu Windows 11 ----
+export component WindowControl inherits Rectangle {
+    // "minimize" | "maximize" | "restore" | "close"
+    in property <string> kind;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: kind == "minimize" ? "Thu nhỏ"
+        : kind == "maximize" ? "Phóng to"
+        : kind == "restore" ? "Khôi phục"
+        : "Đóng";
+    accessible-action-default => { ta.clicked(); }
+
+    width: 46px;
+    height: 32px;
+    background: ta.has-hover
+        ? (kind == "close" ? #c42b1c : Theme.subtle-hover)
+        : transparent;
+
+    if kind == "minimize": Rectangle {
+        width: 12px;
+        height: 1px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.text-primary;
+    }
+    if kind == "maximize": Rectangle {
+        width: 11px;
+        height: 11px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: transparent;
+        border-width: 1px;
+        border-color: Theme.text-primary;
+    }
+    if kind == "restore": Rectangle {
+        x: (parent.width - 11px) / 2 + 2px;
+        y: (parent.height - 11px) / 2 - 2px;
+        width: 9px;
+        height: 9px;
+        background: transparent;
+        border-width: 1px;
+        border-color: Theme.text-primary;
+    }
+    if kind == "restore": Rectangle {
+        x: (parent.width - 11px) / 2 - 1px;
+        y: (parent.height - 11px) / 2;
+        width: 9px;
+        height: 9px;
+        background: Theme.solid-base;
+        border-width: 1px;
+        border-color: Theme.text-primary;
+    }
+    if kind == "close": FluentIcon {
+        name: "dismiss";
+        width: 13px;
+        height: 13px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        tint: ta.has-hover ? #ffffff : Theme.text-primary;
+    }
+
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// ---- Vạch ngăn giữa các nhóm lệnh trên command bar ----
+export component CommandSeparator inherits Rectangle {
+    width: 9px;
+    height: 32px;
+    Rectangle {
+        x: (parent.width - 1px) / 2;
+        y: (parent.height - 20px) / 2;
+        width: 1px;
+        height: 20px;
+        background: Theme.stroke-divider;
     }
 }
 

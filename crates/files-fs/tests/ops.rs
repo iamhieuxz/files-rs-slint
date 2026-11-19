@@ -3,6 +3,8 @@
 //! These run against a real temporary directory: the copy/move/rename rules are
 //! the ones a user feels, so they are asserted on disk rather than mocked.
 
+mod common;
+
 use files_fs::ops;
 
 fn scratch(name: &str) -> std::path::PathBuf {
@@ -25,6 +27,51 @@ fn rename_keeps_the_entry_in_place() {
     assert!(!file.exists());
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn renaming_only_the_letter_case_is_allowed() {
+    // NTFS không phân biệt hoa/thường nên `dest.exists()` đúng dù đó chính là
+    // tệp đang đổi tên. Chặn bằng `exists()` khiến người dùng không sửa được
+    // kiểu chữ của tên — hành vi Explorer cho phép.
+    let dir = scratch("rename-case");
+    let file = dir.join("bao-cao.txt");
+    std::fs::write(&file, b"noi dung").unwrap();
+
+    let renamed = ops::rename(&file, "BAO-CAO.TXT").expect("phải đổi được kiểu chữ");
+
+    assert_eq!(renamed, dir.join("BAO-CAO.TXT"));
+    assert_eq!(std::fs::read(&renamed).unwrap(), b"noi dung");
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["BAO-CAO.TXT".to_string()],
+        "không để lại tên tạm"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_name_longer_than_the_filesystem_limit_is_rejected() {
+    // Báo lỗi hành động được thay vì để OS trả "The filename is too long".
+    let too_long = "a".repeat(256);
+    let err = ops::validate_name(&too_long).expect_err("phải từ chối");
+    assert_eq!(err.code, "invalid_name");
+    assert!(
+        err.message.contains("255"),
+        "phải nêu giới hạn: {}",
+        err.message
+    );
+
+    let at_limit = "a".repeat(255);
+    assert!(
+        ops::validate_name(&at_limit).is_ok(),
+        "đúng 255 ký tự phải hợp lệ"
+    );
 }
 
 #[test]
@@ -153,10 +200,17 @@ fn a_dotfile_is_reported_hidden() {
     let listing = files_fs::read_dir(
         &dir,
         files_core::sort::SortSpec::default(),
-        files_core::sort::ListOptions { show_hidden: true, show_dotfiles: true },
+        files_core::sort::ListOptions {
+            show_hidden: true,
+            show_dotfiles: true,
+        },
     )
     .unwrap();
-    let entry = listing.entries.iter().find(|e| e.name == ".secret").unwrap();
+    let entry = listing
+        .entries
+        .iter()
+        .find(|e| e.name == ".secret")
+        .unwrap();
     assert!(entry.is_hidden, "dotfiles stay hidden on every platform");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -183,6 +237,35 @@ fn directory_size_of_an_empty_folder_is_zero() {
 }
 
 #[test]
+fn directory_size_does_not_follow_a_junction_loop() {
+    // Junction trỏ về thư mục cha tạo vòng lặp; đếm kích thước phải bỏ qua nó
+    // thay vì đi xuống vô hạn và đếm cùng một tệp nhiều lần.
+    let root = scratch("dirsize-junction");
+    std::fs::write(root.join("data.bin"), vec![7u8; 1024]).unwrap();
+    let link = root.join("loop");
+    let ok = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&root)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok || !link.exists() {
+        // Ổ không hỗ trợ junction (FAT, quyền bị chặn).
+        let _ = std::fs::remove_dir_all(&root);
+        common::skip("ổ không tạo được junction (FAT hoặc quyền bị chặn)");
+        return;
+    }
+
+    assert_eq!(
+        files_fs::directory_size(&root),
+        1024,
+        "chỉ tính tệp thật, không đi theo junction"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn directory_size_of_a_missing_folder_is_zero_not_a_panic() {
     let dir = scratch("dirsize-missing");
     let missing = dir.join("nope");
@@ -203,8 +286,8 @@ fn keep_both_renames_instead_of_overwriting() {
     // Đã có sẵn tệp cùng tên ở đích.
     std::fs::write(dst_dir.join("bao-cao.txt"), b"noi dung cu").unwrap();
 
-    let dest = ops::copy_into_with(&src, &dst_dir, ops::ConflictPolicy::KeepBoth)
-        .expect("phải chép được");
+    let dest =
+        ops::copy_into_with(&src, &dst_dir, ops::ConflictPolicy::KeepBoth).expect("phải chép được");
 
     assert_ne!(dest, dst_dir.join("bao-cao.txt"), "không được ghi đè");
     assert_eq!(
@@ -214,6 +297,79 @@ fn keep_both_renames_instead_of_overwriting() {
     );
     assert_eq!(std::fs::read(&dest).unwrap(), b"noi dung moi");
     assert!(dest.exists(), "bản mới phải tồn tại");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn unsafe_names_are_rejected_and_normal_ones_pass() {
+    for bad in [
+        "", "..", ".", "a/b", "a\\b", "CON", "nul.txt", "com1", "LPT9.log", "a?", "x:y", "dot.",
+        "sp ",
+    ] {
+        assert!(ops::validate_name(bad).is_err(), "{bad:?} phải bị từ chối");
+    }
+    for ok in ["a.txt", "Thư mục", "com0", "console", ".gitignore", "a b"] {
+        assert!(ops::validate_name(ok).is_ok(), "{ok:?} phải hợp lệ");
+    }
+}
+
+#[test]
+fn creating_with_a_device_name_is_refused() {
+    let dir = scratch("device-name");
+    assert!(ops::create_folder(&dir, "NUL").is_err());
+    assert!(ops::create_file(&dir, "a..").is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn copying_a_folder_into_its_own_child_is_refused() {
+    let root = scratch("into-self-copy");
+    let parent = root.join("a");
+    let child = parent.join("b");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::write(parent.join("f.txt"), b"x").unwrap();
+
+    let err = ops::copy_into(&parent, &child).expect_err("phải bị từ chối");
+    assert_eq!(err.code, "into_self");
+    let err = ops::copy_into(&parent, &parent).expect_err("phải bị từ chối");
+    assert!(err.code == "into_self" || err.code == "same_path");
+    assert!(!child.join("a").exists(), "không được tạo bản chép dở");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn moving_a_folder_into_its_own_child_is_refused() {
+    let root = scratch("into-self-move");
+    let parent = root.join("a");
+    let child = parent.join("b");
+    std::fs::create_dir_all(&child).unwrap();
+
+    let err = ops::move_into(&parent, &child).expect_err("phải bị từ chối");
+    assert_eq!(err.code, "into_self");
+    assert!(parent.is_dir() && child.is_dir(), "nguồn còn nguyên");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_failed_replace_keeps_the_old_destination() {
+    let root = scratch("replace-rollback");
+    let src_dir = root.join("nguon");
+    let dst_dir = root.join("dich");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    // Nguồn không tồn tại nên bước ghi chắc chắn lỗi sau khi đích cũ đã bị dời.
+    let src = src_dir.join("khong-co.txt");
+    std::fs::write(dst_dir.join("khong-co.txt"), b"cu").unwrap();
+
+    let result = ops::copy_into_with(&src, &dst_dir, ops::ConflictPolicy::Replace);
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read(dst_dir.join("khong-co.txt")).unwrap(),
+        b"cu",
+        "bản cũ phải còn nguyên"
+    );
+    let leftovers = std::fs::read_dir(&dst_dir).unwrap().count();
+    assert_eq!(leftovers, 1, "không để lại file tạm");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -228,11 +384,50 @@ fn replace_overwrites_the_old_file() {
     std::fs::write(&src, b"moi").unwrap();
     std::fs::write(dst_dir.join("t.txt"), b"cu").unwrap();
 
-    let dest = ops::copy_into_with(&src, &dst_dir, ops::ConflictPolicy::Replace)
-        .expect("phải chép được");
+    let dest =
+        ops::copy_into_with(&src, &dst_dir, ops::ConflictPolicy::Replace).expect("phải chép được");
 
     assert_eq!(dest, dst_dir.join("t.txt"), "ghi đè đúng chỗ");
     assert_eq!(std::fs::read(&dest).unwrap(), b"moi");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn copy_replace_inside_the_source_folder_keeps_the_source() {
+    // Ctrl+C rồi Ctrl+V ngay trong thư mục đang đứng, chọn "Thay thế":
+    // đích trùng nguồn. Đây từng xoá mất chính tệp gốc.
+    let root = scratch("replace-copy-same-folder");
+    let file = root.join("giu-nguyen.txt");
+    std::fs::write(&file, b"noi dung goc").unwrap();
+
+    let err = ops::copy_into_with(&file, &root, ops::ConflictPolicy::Replace)
+        .expect_err("phải từ chối thay thế chính nó");
+
+    assert_eq!(err.code, "same_path");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"noi dung goc",
+        "tệp gốc phải còn nguyên"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn move_replace_inside_the_source_folder_keeps_the_source() {
+    // Cùng tình huống với Ctrl+X: xoá đích trước khi move sẽ xoá luôn nguồn.
+    let root = scratch("replace-move-same-folder");
+    let file = root.join("giu-nguyen.txt");
+    std::fs::write(&file, b"noi dung goc").unwrap();
+
+    let err = ops::move_into_with(&file, &root, ops::ConflictPolicy::Replace)
+        .expect_err("phải từ chối di chuyển vào chính nó");
+
+    assert_eq!(err.code, "same_path");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"noi dung goc",
+        "tệp gốc phải còn nguyên"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -259,6 +454,64 @@ fn the_default_policy_still_refuses_to_overwrite() {
 }
 
 #[test]
+fn a_taken_zip_name_gets_a_free_numbered_name() {
+    // UI hỏi tên trước khi nén để không bao giờ ghi đè archive cũ.
+    let dir = scratch("free-zip-name");
+    std::fs::write(dir.join("photos.zip"), b"cu").unwrap();
+
+    let next = ops::free_path(&dir, "photos", ".zip");
+
+    assert_eq!(next, dir.join("photos (2).zip"));
+    assert!(!next.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn git_status_inside_a_subfolder_uses_paths_relative_to_that_folder() {
+    // `git status` trả đường dẫn theo gốc repo. Ghép thẳng với thư mục đang
+    // xem sẽ ra `sub/sub/inner/note.txt` và cột trạng thái không bao giờ khớp.
+    let root = scratch("git-subdir");
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    if !run(&["init", "--quiet"]) {
+        let _ = std::fs::remove_dir_all(&root);
+        common::skip("git không có trên máy");
+        return;
+    }
+    let _ = run(&["config", "user.email", "test@example.invalid"]);
+    let _ = run(&["config", "user.name", "Test"]);
+    std::fs::create_dir_all(root.join("sub/inner")).unwrap();
+    std::fs::write(root.join("sub/inner/note.txt"), b"x").unwrap();
+    if !run(&["add", "-A"]) || !run(&["commit", "--quiet", "-m", "init"]) {
+        let _ = std::fs::remove_dir_all(&root);
+        common::skip("git không chạy được để tạo repo tạm");
+        return;
+    }
+    std::fs::write(root.join("sub/inner/note.txt"), b"changed").unwrap();
+    std::fs::write(root.join("sub/new.txt"), b"new").unwrap();
+
+    let sub = root.join("sub");
+    let status = files_fs::status_for(&sub);
+
+    assert_eq!(
+        status.get(&sub.join("inner/note.txt")),
+        Some(&files_fs::GitState::Modified),
+        "đường dẫn phải tương đối theo thư mục đang xem; map={status:?}"
+    );
+    assert_eq!(
+        status.get(&sub.join("new.txt")),
+        Some(&files_fs::GitState::Untracked)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn a_shortcut_reports_its_target() {
     // Đọc đích bằng IShellLinkW trên một shortcut thật do Windows tạo.
     let root = scratch("lnk-target");
@@ -278,15 +531,19 @@ fn a_shortcut_reports_its_target() {
         .map(|s| s.success())
         .unwrap_or(false);
     if !ok || !link.exists() {
-        // Máy không cho tạo shortcut: bỏ qua thay vì báo hỏng.
         let _ = std::fs::remove_dir_all(&root);
+        common::skip("máy không tạo được shortcut .lnk qua PowerShell");
         return;
     }
 
     let got = files_fs::shortcut_target(&link).expect("phải đọc được đích");
+    // Windows có thể trả về đường dẫn 8.3 (IAMHIE~1) cho thư mục temp; so sánh
+    // dạng canonical để không phụ thuộc tên ngắn/dài của user profile.
+    let got = std::fs::canonicalize(&got).unwrap_or(got);
+    let expected = std::fs::canonicalize(&target).unwrap_or(target.clone());
     assert_eq!(
         got.to_string_lossy().to_lowercase(),
-        target.to_string_lossy().to_lowercase()
+        expected.to_string_lossy().to_lowercase()
     );
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -324,6 +581,7 @@ fn rotating_a_png_swaps_its_dimensions() {
         .unwrap_or(false);
     if !ok || !src.exists() {
         let _ = std::fs::remove_dir_all(&root);
+        common::skip("không tạo được tệp mẫu bằng PowerShell");
         return;
     }
 
@@ -353,7 +611,11 @@ fn rotating_an_unsupported_extension_is_refused() {
     std::fs::write(&f, b"khong phai anh").unwrap();
     let err = files_fs::rotate_image_clockwise(&f).expect_err("phải từ chối");
     assert_eq!(err.code, "unsupported");
-    assert_eq!(std::fs::read(&f).unwrap(), b"khong phai anh", "tệp gốc không đổi");
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        b"khong phai anh",
+        "tệp gốc không đổi"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -366,17 +628,23 @@ fn git_status_reports_a_real_repository() {
         .and_then(|p| p.parent())
         .expect("gốc repo");
     if !root.join(".git").exists() {
-        return; // Không phải checkout git: bỏ qua.
+        common::skip("không phải checkout git");
+        return;
     }
 
     let status = files_fs::status_for(root);
     // Repo này có nhiều tệp chưa commit trong lúc phát triển, nên chỉ cần
     // kiểm tra rằng hàm không trả rỗng và mọi khoá là đường dẫn tuyệt đối.
+    // Repo sạch (không có thay đổi) là trạng thái hợp lệ, không phải lỗi.
     if status.is_empty() {
+        common::skip("repo không có thay đổi nào để kiểm tra git status");
         return;
     }
     for path in status.keys() {
-        assert!(path.is_absolute(), "khoá phải là đường dẫn tuyệt đối: {path:?}");
+        assert!(
+            path.is_absolute(),
+            "khoá phải là đường dẫn tuyệt đối: {path:?}"
+        );
     }
 }
 
@@ -410,6 +678,7 @@ fn an_untracked_file_shows_up_as_untracked() {
         .unwrap_or(false);
     if !ok {
         let _ = std::fs::remove_dir_all(&root);
+        common::skip("git không chạy được để tạo repo tạm");
         return;
     }
     std::fs::write(root.join("moi.txt"), b"x").unwrap();

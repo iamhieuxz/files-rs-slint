@@ -1,4 +1,4 @@
-﻿//! File operations: clipboard, paste, compress, extract, hash, folder size.
+//! File operations: clipboard, paste, compress, extract, hash, folder size.
 //!
 //! Every operation is submitted to the worker and reported back as a status line
 //! or an error; nothing here blocks the UI thread. This is also where an undo
@@ -6,9 +6,8 @@
 //! module instead of scattered through the callbacks.
 
 use crate::slint_generated::*;
-use crate::navigation::reload;
 use crate::state::App;
-use crate::{format, logging, ops_worker};
+use crate::{operations, ops_worker};
 use ops_worker::Job;
 use slint::SharedString;
 use std::cell::RefCell;
@@ -29,7 +28,7 @@ pub fn copy_selected_path(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             .join("\r\n")
     };
     match files_fs::copy_text_to_clipboard(&text) {
-        Ok(()) => ui.set_status_tertiary(SharedString::from("Đã sao chép đường dẫn")),
+        Ok(()) => ui.set_status_message(SharedString::from("Đã sao chép đường dẫn")),
         Err(e) => ui.set_error_text(SharedString::from(e.message.as_str())),
     }
 }
@@ -57,34 +56,45 @@ pub fn set_clipboard(ui: &AppWindow, app: &Rc<RefCell<App>>, cut: bool) {
     // Chip trên command bar chỉ có ý nghĩa khi biết đang giữ gì.
     ui.set_clipboard_mode(SharedString::from(if cut { "cut" } else { "copy" }));
     ui.set_clipboard_count(count);
-    ui.set_status_tertiary(SharedString::from(
-        format!(
-            "Đã {} {count} mục",
-            if cut { "cắt" } else { "sao chép" }
-        )
-        .as_str(),
+    ui.set_status_message(SharedString::from(
+        format!("Đã {} {count} mục", if cut { "cắt" } else { "sao chép" }).as_str(),
     ));
 }
 
 /// Dán với cách xử lý trùng tên do người dùng chọn.
-pub fn do_paste_with(
-    ui: &AppWindow,
-    app: &Rc<RefCell<App>>,
-    policy: files_fs::ConflictPolicy,
-) {
+pub fn do_paste_with(ui: &AppWindow, app: &Rc<RefCell<App>>, policy: files_fs::ConflictPolicy) {
     let (sources, target, cut) = {
         let s = app.borrow();
-        (s.clipboard.clone(), s.tab().current().to_path_buf(), s.clipboard_cut)
+        (
+            s.clipboard.clone(),
+            s.tab().current().to_path_buf(),
+            s.clipboard_cut,
+        )
     };
     if sources.is_empty() {
         return;
     }
-    ui.set_busy(true);
-    ui.set_busy_text(SharedString::from(if cut { "Đang di chuyển…" } else { "Đang sao chép…" }));
+    operations::begin(
+        ui,
+        app,
+        if cut {
+            "Đang di chuyển…"
+        } else {
+            "Đang sao chép…"
+        },
+    );
     let job = if cut {
-        Job::Move { sources, target, policy }
+        Job::Move {
+            sources,
+            target,
+            policy,
+        }
     } else {
-        Job::Copy { sources, target, policy }
+        Job::Copy {
+            sources,
+            target,
+            policy,
+        }
     };
     app.borrow().worker.submit(job);
 }
@@ -138,9 +148,10 @@ pub fn compress_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         return;
     }
     let name = files_fs::archive_name(&sources);
-    let dest = dir.join(format!("{name}.zip"));
-    ui.set_busy(true);
-    ui.set_busy_text(SharedString::from("Đang nén…"));
+    // Chọn tên còn trống: nén không bao giờ được ghi đè archive cũ, kể cả khi
+    // mục đang chọn chính là một tệp .zip cùng tên.
+    let dest = files_fs::free_path(&dir, &name, ".zip");
+    operations::begin(ui, app, "Đang nén…");
     app.borrow().worker.submit(Job::Zip { sources, dest });
 }
 
@@ -166,8 +177,7 @@ pub fn extract_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         target = parent.join(format!("{stem} ({n})"));
         n += 1;
     }
-    ui.set_busy(true);
-    ui.set_busy_text(SharedString::from("Đang giải nén…"));
+    operations::begin(ui, app, "Đang giải nén…");
     app.borrow().worker.submit(Job::Unzip { archive, target });
 }
 
@@ -180,8 +190,7 @@ pub fn hash_selection(ui: &AppWindow, app: &Rc<RefCell<App>>, kind: files_fs::Ha
             .map(|e| PathBuf::from(&e.path))
     };
     if let Some(path) = path {
-        ui.set_busy(true);
-        ui.set_busy_text(SharedString::from("Đang tính mã băm…"));
+        operations::begin(ui, app, "Đang tính mã băm…");
         app.borrow().worker.submit(Job::Hash { path, kind });
     }
 }
@@ -197,8 +206,7 @@ pub fn view_folder_size(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             .map(|e| PathBuf::from(&e.path))
     };
     if let Some(path) = path {
-        ui.set_busy(true);
-        ui.set_busy_text(SharedString::from("Đang tính kích thước thư mục…"));
+        operations::begin(ui, app, "Đang tính kích thước thư mục…");
         app.borrow().worker.submit(Job::FolderSize { path });
     }
 }
@@ -207,8 +215,9 @@ pub fn view_folder_size(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 
 /// Hoàn tác thao tác gần nhất.
 ///
-/// Chỉ ghi lại vào ngăn xếp làm lại khi thao tác ngược thật sự thành công: nếu
-/// thất bại, mục đó biến mất khỏi lịch sử thay vì lặp lại lỗi mãi.
+/// Chạy trên worker: hoàn tác một lần di chuyển lớn có thể mất vài giây và
+/// không được treo cửa sổ. UI chỉ dời action giữa hai ngăn xếp khi worker báo
+/// thành công.
 pub fn undo_last(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let action = app.borrow_mut().undo.take_undo();
     let Some(action) = action else {
@@ -219,21 +228,11 @@ pub fn undo_last(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         } else {
             "Không có gì để hoàn tác"
         };
-        ui.set_status_tertiary(SharedString::from(hint));
+        ui.set_status_message(SharedString::from(hint));
         return;
     };
-    match crate::undo::undo(&action) {
-        Ok(()) => {
-            ui.set_status_tertiary(SharedString::from(action.undo_label().as_str()));
-            app.borrow_mut().undo.undone(action);
-        }
-        Err(e) => {
-            logging::write(&format!("hoàn tác lỗi [{}]: {}", e.code, e.message));
-            let text = format::explain_error(&e.code, &e.message);
-            ui.set_error_text(SharedString::from(text.as_str()));
-        }
-    }
-    reload(ui, app);
+    operations::begin(ui, app, "Đang hoàn tác…");
+    app.borrow().worker.submit(Job::Undo { action });
 }
 
 /// Làm lại thao tác vừa hoàn tác.
@@ -245,21 +244,56 @@ pub fn redo_last(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         } else {
             "Không có gì để làm lại"
         };
-        ui.set_status_tertiary(SharedString::from(hint));
+        ui.set_status_message(SharedString::from(hint));
         return;
     };
-    match crate::undo::redo(&action) {
-        Ok(()) => {
-            ui.set_status_tertiary(SharedString::from(action.redo_label().as_str()));
-            app.borrow_mut().undo.redone(action);
-        }
-        Err(e) => {
-            logging::write(&format!("làm lại lỗi [{}]: {}", e.code, e.message));
-            let text = format::explain_error(&e.code, &e.message);
-            ui.set_error_text(SharedString::from(text.as_str()));
-        }
+    operations::begin(ui, app, "Đang làm lại…");
+    app.borrow().worker.submit(Job::Redo { action });
+}
+
+/// Thả tệp vào một thư mục: mặc định di chuyển, Ctrl để sao chép.
+///
+/// Dùng `KeepBoth` để một cú thả không bao giờ ghi đè tệp trùng tên.
+pub fn drop_paths(
+    ui: &AppWindow,
+    app: &Rc<RefCell<App>>,
+    sources: Vec<PathBuf>,
+    target: PathBuf,
+    copy: bool,
+) {
+    if sources.is_empty() {
+        return;
     }
-    reload(ui, app);
+    if !target.is_dir() {
+        ui.set_error_text(SharedString::from(
+            format!("Không thả được vào: {}", target.display()).as_str(),
+        ));
+        return;
+    }
+    operations::begin(
+        ui,
+        app,
+        if copy {
+            "Đang sao chép…"
+        } else {
+            "Đang di chuyển…"
+        },
+    );
+    let policy = files_fs::ConflictPolicy::KeepBoth;
+    let job = if copy {
+        Job::Copy {
+            sources,
+            target,
+            policy,
+        }
+    } else {
+        Job::Move {
+            sources,
+            target,
+            policy,
+        }
+    };
+    app.borrow().worker.submit(job);
 }
 
 /// Tìm đệ quy dưới thư mục hiện tại.
@@ -269,12 +303,15 @@ pub fn redo_last(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 pub fn search_recursive(ui: &AppWindow, app: &Rc<RefCell<App>>, query: &str) {
     let q = query.trim().to_string();
     if q.is_empty() {
-        ui.set_status_tertiary(SharedString::from("Gõ tên cần tìm trước"));
+        ui.set_status_message(SharedString::from("Gõ tên cần tìm trước"));
         return;
     }
     let (root, token) = {
         let s = app.borrow();
-        (s.tab().current().to_path_buf(), s.load_token)
+        (
+            s.tab().current().to_path_buf(),
+            s.pane_load(s.active_pane).token,
+        )
     };
     ui.set_busy(true);
     ui.set_busy_text(SharedString::from("Đang tìm trong thư mục con…"));

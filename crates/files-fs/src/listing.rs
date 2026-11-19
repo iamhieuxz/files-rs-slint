@@ -16,11 +16,7 @@ use std::path::Path;
 /// children are partly unreadable still shows what it can, and the failures are
 /// reported in `partial_errors`. Only a failure to read the directory itself is
 /// an error.
-pub fn read_dir(
-    path: &Path,
-    sort: SortSpec,
-    opts: ListOptions,
-) -> Result<Listing, FsError> {
+pub fn read_dir(path: &Path, sort: SortSpec, opts: ListOptions) -> Result<Listing, FsError> {
     let meta = std::fs::metadata(path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => FsError::not_found(&path.to_string_lossy()),
         std::io::ErrorKind::PermissionDenied => FsError::access_denied(&path.to_string_lossy()),
@@ -80,7 +76,11 @@ pub fn read_dir(
         let md = item.metadata();
         let (size, modified_ms, created_ms) = match &md {
             Ok(m) => (
-                if file_type.is_dir() { None } else { Some(m.len()) },
+                if file_type.is_dir() {
+                    None
+                } else {
+                    Some(m.len())
+                },
                 m.modified().ok().and_then(system_time_ms),
                 m.created().ok().and_then(system_time_ms),
             ),
@@ -101,7 +101,10 @@ pub fn read_dir(
             EntryKind::Other
         };
 
-        let readonly = md.as_ref().map(|m| m.permissions().readonly()).unwrap_or(false);
+        let readonly = md
+            .as_ref()
+            .map(|m| m.permissions().readonly())
+            .unwrap_or(false);
 
         let extension = if kind.is_dir() {
             None

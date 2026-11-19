@@ -24,14 +24,16 @@ fn reads_entries_with_metadata() {
     std::fs::write(dir.join("alpha.txt"), b"hello").unwrap();
     std::fs::write(dir.join("beta.log"), b"12345").unwrap();
 
-    let listing =
-        files_fs::read_dir(&dir, SortSpec::default(), ListOptions::default()).unwrap();
+    let listing = files_fs::read_dir(&dir, SortSpec::default(), ListOptions::default()).unwrap();
 
     assert_eq!(listing.entries.len(), 3);
     // Folders first, then natural name order.
     assert_eq!(listing.entries[0].name, "subfolder");
     assert_eq!(listing.entries[0].kind, EntryKind::Directory);
-    assert!(listing.entries[0].size.is_none(), "a folder reports no size");
+    assert!(
+        listing.entries[0].size.is_none(),
+        "a folder reports no size"
+    );
     assert_eq!(listing.entries[1].name, "alpha.txt");
     assert_eq!(listing.entries[1].size, Some(5));
     assert_eq!(listing.entries[1].extension.as_deref(), Some("txt"));
@@ -54,12 +56,18 @@ fn reports_hidden_entries_and_its_count() {
 
     let hidden = files_fs::read_dir(&dir, SortSpec::default(), ListOptions::default()).unwrap();
     assert_eq!(hidden.entries.len(), 1);
-    assert_eq!(hidden.hidden_count, 1, "the filtered entry is still counted");
+    assert_eq!(
+        hidden.hidden_count, 1,
+        "the filtered entry is still counted"
+    );
 
     let all = files_fs::read_dir(
         &dir,
         SortSpec::default(),
-        ListOptions { show_hidden: true, show_dotfiles: true },
+        ListOptions {
+            show_hidden: true,
+            show_dotfiles: true,
+        },
     )
     .unwrap();
     assert_eq!(all.entries.len(), 2);
@@ -98,7 +106,11 @@ fn sorting_by_size_changes_the_order() {
 
     let listing = files_fs::read_dir(
         &dir,
-        SortSpec { by: SortBy::Size, folders_first: false, ..Default::default() },
+        SortSpec {
+            by: SortBy::Size,
+            folders_first: false,
+            ..Default::default()
+        },
         ListOptions::default(),
     )
     .unwrap();
@@ -130,7 +142,10 @@ fn watching_a_directory_is_possible() {
     std::fs::write(dir.join("new.txt"), b"x").unwrap();
     let mut seen = false;
     for _ in 0..20 {
-        if handle.recv_timeout(std::time::Duration::from_millis(250)).is_some() {
+        if handle
+            .recv_timeout(std::time::Duration::from_millis(250))
+            .is_some()
+        {
             seen = true;
             break;
         }

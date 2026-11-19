@@ -107,6 +107,46 @@ fn several_items_are_named_after_the_folder() {
 }
 
 #[test]
+fn zipping_a_file_onto_itself_is_refused_without_truncating_it() {
+    // Chọn chính tệp .zip rồi bấm "Nén thành ZIP": đích trùng nguồn.
+    // `File::create` từng truncate nguồn trước khi đọc, phá hỏng archive.
+    let dir = scratch("zip-self");
+    let file = dir.join("photos.zip");
+    std::fs::write(&file, b"du lieu zip cu").unwrap();
+
+    let err = archive::create_zip(std::slice::from_ref(&file), &file)
+        .expect_err("phải từ chối nén tệp vào chính nó");
+
+    assert_eq!(err.code, "exists");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"du lieu zip cu",
+        "archive gốc phải còn nguyên"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_existing_archive_is_never_overwritten() {
+    let dir = scratch("zip-existing");
+    let payload = dir.join("a.txt");
+    std::fs::write(&payload, b"alpha").unwrap();
+    let dest = dir.join("a.zip");
+    std::fs::write(&dest, b"archive cu").unwrap();
+
+    let err = archive::create_zip(std::slice::from_ref(&payload), &dest)
+        .expect_err("phải từ chối ghi đè archive đã có");
+
+    assert_eq!(err.code, "exists");
+    assert_eq!(
+        std::fs::read(&dest).unwrap(),
+        b"archive cu",
+        "archive cũ phải nguyên vẹn"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn extracting_a_missing_archive_reports_an_error() {
     let dir = scratch("zipmissing");
     let err = archive::extract_zip(&dir.join("nope.zip"), &dir.join("out")).unwrap_err();
@@ -126,6 +166,44 @@ fn a_corrupt_archive_is_reported_as_invalid() {
 
     let err = archive::extract_zip(&bad, &dir.join("out")).unwrap_err();
     assert_eq!(err.code, "invalid_archive", "got {}", err.code);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn extraction_rejects_entries_that_escape_the_target() {
+    use std::io::Write;
+
+    let dir = scratch("zip-slip");
+    let archive_path = dir.join("evil.zip");
+    {
+        let file = File::create(&archive_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        // Relative traversal and an absolute-looking path. A naive join would
+        // write both outside `out/`.
+        zip.start_file("../escape.txt", options).unwrap();
+        zip.write_all(b"escaped").unwrap();
+        zip.start_file("/absolute.txt", options).unwrap();
+        zip.write_all(b"absolute").unwrap();
+        // Một tệp hợp lệ để chắc chắn archive vẫn được giải nén.
+        zip.start_file("safe.txt", options).unwrap();
+        zip.write_all(b"safe").unwrap();
+        zip.finish().unwrap();
+    }
+
+    let out = dir.join("out");
+    let count = archive::extract_zip(&archive_path, &out).expect("extract");
+
+    assert_eq!(count, 1, "only the safe entry is extracted");
+    assert_eq!(std::fs::read(out.join("safe.txt")).unwrap(), b"safe");
+    assert!(!dir.join("escape.txt").exists(), "no write above target");
+    assert!(!out.join("../escape.txt").exists());
+    assert!(!dir.join("absolute.txt").exists(), "no absolute write");
+    assert!(
+        !out.join("absolute.txt").exists(),
+        "absolute entry is skipped"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

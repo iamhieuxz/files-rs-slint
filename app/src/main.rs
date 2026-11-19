@@ -16,21 +16,26 @@ use slint_generated::*;
 
 mod commands;
 mod dialogs;
+mod drag;
 mod events;
 mod file_ops;
 mod format;
 mod history;
 mod logging;
+mod native_drop;
+mod navigation;
+mod operations;
 mod ops_worker;
+mod panes;
+mod persist;
 mod preview;
-mod settings;
 mod selection;
+mod settings;
 mod state;
 mod tabs;
-mod undo;
-mod navigation;
-mod view;
 mod tags;
+mod undo;
+mod view;
 mod window;
 mod windows;
 mod wiring;
@@ -42,10 +47,7 @@ fn main() -> Result<(), slint::PlatformError> {
     logging::install_panic_hook();
     // `files-fs` không tự biết ghi log ở đâu; cài sink để lỗi Win32 không mất.
     files_fs::set_log_sink(logging::write);
-    logging::write(&format!(
-        "khởi động, log tại {:?}",
-        logging::log_path()
-    ));
+    logging::write(&format!("khởi động, log tại {:?}", logging::log_path()));
 
     // Cửa sổ đầu tiên cũng đi qua cùng đường với các cửa sổ sau, để chỉ có
     // một nơi dựng App và nối callback.
@@ -70,12 +72,16 @@ fn main() -> Result<(), slint::PlatformError> {
 fn install_window_sweeper() {
     use std::time::Duration;
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, Duration::from_millis(400), || {
-        windows::sweep();
-        if windows::is_empty() {
-            let _ = slint::quit_event_loop();
-        }
-    });
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(400),
+        || {
+            windows::sweep();
+            if windows::is_empty() {
+                let _ = slint::quit_event_loop();
+            }
+        },
+    );
     std::mem::forget(timer);
 }
 
@@ -143,7 +149,10 @@ mod tests {
             parent: root.clone(),
             name: "tài liệu".into(),
         });
-        match rx.recv_timeout(Duration::from_secs(10)).expect("worker phải trả lời") {
+        match rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("worker phải trả lời")
+        {
             JobDone::OpDone { result, .. } => result.expect("tạo thư mục phải thành công"),
             _ => panic!("cần OpDone"),
         }
@@ -154,7 +163,10 @@ mod tests {
             from: created.clone(),
             to: "đã đổi tên".into(),
         });
-        match rx.recv_timeout(Duration::from_secs(10)).expect("worker phải trả lời") {
+        match rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("worker phải trả lời")
+        {
             JobDone::OpDone { result, .. } => result.expect("đổi tên phải thành công"),
             _ => panic!("cần OpDone"),
         }
@@ -173,7 +185,10 @@ mod tests {
             parent: root.clone(),
             name: String::new(),
         });
-        match rx.recv_timeout(Duration::from_secs(10)).expect("worker phải trả lời") {
+        match rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("worker phải trả lời")
+        {
             JobDone::OpDone { result, .. } => result.expect("tạo với tên rỗng phải thành công"),
             _ => panic!("cần OpDone"),
         }
@@ -223,12 +238,4 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
     }
-
-
-
-
-
-
-
-
 }

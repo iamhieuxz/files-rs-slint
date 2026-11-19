@@ -11,6 +11,7 @@
 //! infinite loop.
 
 use crate::listing;
+use crate::ops::is_reparse_point;
 use files_core::Entry;
 use std::path::Path;
 
@@ -49,11 +50,7 @@ pub struct SearchHit {
 /// Returns hits in discovery order. `should_stop` is called before each folder
 /// is entered, so a cancelled search returns what it found so far instead of
 /// nothing — the user keeps the partial result.
-pub fn search<F>(
-    root: &Path,
-    opts: &SearchOptions,
-    mut should_stop: F,
-) -> (Vec<SearchHit>, bool)
+pub fn search<F>(root: &Path, opts: &SearchOptions, mut should_stop: F) -> (Vec<SearchHit>, bool)
 where
     F: FnMut() -> bool,
 {
@@ -75,7 +72,10 @@ where
         let listing = match listing::read_dir(
             &dir,
             files_core::SortSpec::default(),
-            files_core::sort::ListOptions { show_hidden: false, show_dotfiles: false },
+            files_core::sort::ListOptions {
+                show_hidden: false,
+                show_dotfiles: false,
+            },
         ) {
             Ok(l) => l,
             // Thư mục không đọc được (quyền, ổ tháo rời) thì bỏ qua, không dừng
@@ -111,32 +111,6 @@ where
     (hits, cancelled)
 }
 
-/// True when the path is a reparse point (junction, symlink, mount point).
-#[cfg(windows)]
-fn is_reparse_point(path: &Path) -> bool {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::{
-        GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
-    };
-
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-    // SAFETY: `wide` là buffer NUL-terminated; hàm chỉ đọc thuộc tính.
-    let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
-    if attrs == INVALID_FILE_ATTRIBUTES {
-        // Không đọc được thì coi như reparse point để không đi vào.
-        return true;
-    }
-    attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(path: &Path) -> bool {
-    path.symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,7 +118,11 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let exe = std::env::current_exe().expect("exe");
-        let dir = exe.parent().expect("thư mục").join("test-scratch").join(name);
+        let dir = exe
+            .parent()
+            .expect("thư mục")
+            .join("test-scratch")
+            .join(name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tạo thư mục tạm");
         dir
@@ -155,7 +133,10 @@ mod tests {
         // Query rỗng mà vẫn quét là quét cả ổ đĩa.
         let root = scratch("search-empty");
         std::fs::write(root.join("a.txt"), b"x").unwrap();
-        let opts = SearchOptions { query: "  ".into(), ..Default::default() };
+        let opts = SearchOptions {
+            query: "  ".into(),
+            ..Default::default()
+        };
         let (hits, _) = search(&root, &opts, || false);
         assert!(hits.is_empty());
         let _ = std::fs::remove_dir_all(&root);
@@ -169,13 +150,20 @@ mod tests {
         std::fs::write(deep.join("bao-cao.txt"), b"x").unwrap();
         std::fs::write(root.join("khac.txt"), b"x").unwrap();
 
-        let opts = SearchOptions { query: "bao-cao".into(), ..Default::default() };
+        let opts = SearchOptions {
+            query: "bao-cao".into(),
+            ..Default::default()
+        };
         let (hits, cancelled) = search(&root, &opts, || false);
 
         assert!(!cancelled);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entry.name, "bao-cao.txt");
-        assert!(hits[0].in_folder.contains('a'), "phải ghi thư mục chứa: {}", hits[0].in_folder);
+        assert!(
+            hits[0].in_folder.contains('a'),
+            "phải ghi thư mục chứa: {}",
+            hits[0].in_folder
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -183,7 +171,10 @@ mod tests {
     fn the_search_ignores_case() {
         let root = scratch("search-case");
         std::fs::write(root.join("BAOCAO.TXT"), b"x").unwrap();
-        let opts = SearchOptions { query: "baocao".into(), ..Default::default() };
+        let opts = SearchOptions {
+            query: "baocao".into(),
+            ..Default::default()
+        };
         let (hits, _) = search(&root, &opts, || false);
         assert_eq!(hits.len(), 1);
         let _ = std::fs::remove_dir_all(&root);
@@ -197,7 +188,11 @@ mod tests {
         std::fs::write(sub.join("sau.txt"), b"x").unwrap();
         std::fs::write(root.join("nong.txt"), b"x").unwrap();
 
-        let opts = SearchOptions { query: ".txt".into(), max_depth: 0, ..Default::default() };
+        let opts = SearchOptions {
+            query: ".txt".into(),
+            max_depth: 0,
+            ..Default::default()
+        };
         let (hits, _) = search(&root, &opts, || false);
         assert_eq!(hits.len(), 1, "chỉ thấy tệp ở gốc");
         assert_eq!(hits[0].entry.name, "nong.txt");
@@ -210,7 +205,11 @@ mod tests {
         for i in 0..20 {
             std::fs::write(root.join(format!("t{i}.txt")), b"x").unwrap();
         }
-        let opts = SearchOptions { query: ".txt".into(), limit: 5, ..Default::default() };
+        let opts = SearchOptions {
+            query: ".txt".into(),
+            limit: 5,
+            ..Default::default()
+        };
         let (hits, _) = search(&root, &opts, || false);
         assert_eq!(hits.len(), 5);
         let _ = std::fs::remove_dir_all(&root);
@@ -223,7 +222,10 @@ mod tests {
         for i in 0..10 {
             std::fs::write(root.join(format!("t{i}.txt")), b"x").unwrap();
         }
-        let opts = SearchOptions { query: ".txt".into(), ..Default::default() };
+        let opts = SearchOptions {
+            query: ".txt".into(),
+            ..Default::default()
+        };
         let (hits, cancelled) = search(&root, &opts, || true);
         assert!(cancelled);
         let _ = hits; // Không khẳng định số lượng: phụ thuộc thứ tự duyệt.
@@ -232,7 +234,10 @@ mod tests {
 
     #[test]
     fn a_missing_root_returns_nothing_instead_of_panicking() {
-        let opts = SearchOptions { query: "x".into(), ..Default::default() };
+        let opts = SearchOptions {
+            query: "x".into(),
+            ..Default::default()
+        };
         let (hits, cancelled) = search(Path::new(r"C:\khong\co\that"), &opts, || false);
         assert!(hits.is_empty());
         assert!(!cancelled);

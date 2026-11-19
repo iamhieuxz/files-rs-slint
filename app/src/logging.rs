@@ -21,7 +21,9 @@ fn candidates() -> Vec<PathBuf> {
     if let Some(base) = std::env::var_os("LOCALAPPDATA") {
         out.push(PathBuf::from(base).join("FilesRS").join("log.txt"));
     }
-    if let Some(exe) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    if let Some(exe) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
     {
         out.push(exe.join("files-rs-log.txt"));
     }

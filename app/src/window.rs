@@ -76,6 +76,38 @@ pub fn wire(ui: &crate::AppWindow, app_id: *const std::cell::RefCell<crate::stat
             });
         });
     }
+
+    {
+        let w = ui.as_weak();
+        ui.on_window_resize(move |edge| {
+            let Some(ui) = w.upgrade() else { return };
+            crate::logging::write(&format!("resize cửa sổ: {edge}"));
+            ui.window().with_winit_window(|win| {
+                use slint::winit_030::winit::window::ResizeDirection;
+                let direction = match edge.as_str() {
+                    "n" => ResizeDirection::North,
+                    "s" => ResizeDirection::South,
+                    "e" => ResizeDirection::East,
+                    "w" => ResizeDirection::West,
+                    "ne" => ResizeDirection::NorthEast,
+                    "nw" => ResizeDirection::NorthWest,
+                    "se" => ResizeDirection::SouthEast,
+                    "sw" => ResizeDirection::SouthWest,
+                    _ => return,
+                };
+                if let Err(e) = win.drag_resize_window(direction) {
+                    crate::logging::write(&format!("drag_resize_window lỗi: {e}"));
+                }
+            });
+        });
+    }
+}
+
+/// Native HWND của cửa sổ Slint, dùng cho các API Win32 không có qua Slint.
+#[cfg(windows)]
+pub fn native_hwnd(ui: &crate::AppWindow) -> Option<HWND> {
+    use slint::winit_030::WinitWindowAccessor;
+    ui.window().with_winit_window(hwnd_of).flatten()
 }
 
 #[cfg(windows)]
@@ -144,11 +176,7 @@ pub fn install_state_poller(ui: &crate::AppWindow) {
         let Some(ui) = w.upgrade() else { return };
         let maximized = ui
             .window()
-            .with_winit_window(|win| {
-                hwnd_of(win)
-                    .map(is_zoomed)
-                    .unwrap_or(false)
-            })
+            .with_winit_window(|win| hwnd_of(win).map(is_zoomed).unwrap_or(false))
             .unwrap_or(false);
         if ui.get_is_maximized() != maximized {
             ui.set_is_maximized(maximized);

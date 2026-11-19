@@ -30,6 +30,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Format
+        run: cargo fmt --all -- --check
+
       - name: Build (debug)
         run: cargo build --workspace
 
@@ -38,6 +41,12 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets
+
+      # Cảnh báo (không fail) khi module vượt ~800 dòng, để biết lúc nào nên
+      # tách file thay vì để một module phình dần.
+      - name: Kích thước module
+        shell: pwsh
+        run: ./scripts/check-module-size.ps1
 
       # Bản release là thứ người dùng thật chạy; build nó ở đây để lỗi chỉ xuất
       # hiện khi tối ưu hoá bị bắt trước khi phát hành.

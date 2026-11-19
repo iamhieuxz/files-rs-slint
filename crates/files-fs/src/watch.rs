@@ -58,5 +58,8 @@ pub fn watch_directory(path: &Path) -> Result<WatchHandle, FsError> {
         .watch(path, RecursiveMode::NonRecursive)
         .map_err(|e| FsError::new("watch_failed", e.to_string()))?;
 
-    Ok(WatchHandle { _watcher: watcher, rx })
+    Ok(WatchHandle {
+        _watcher: watcher,
+        rx,
+    })
 }

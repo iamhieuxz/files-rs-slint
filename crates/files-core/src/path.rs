@@ -25,16 +25,19 @@ pub struct Crumb {
 /// - Strips a trailing separator, except for a bare drive root (`C:\`).
 pub fn normalize(input: &str) -> PathBuf {
     let trimmed = input.trim();
-    let expanded: PathBuf = if trimmed == "~" || trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
-        let rest = trimmed.trim_start_matches('~').trim_start_matches(['/', '\\']);
-        let mut p = home_dir();
-        if !rest.is_empty() {
-            p.push(rest);
-        }
-        p
-    } else {
-        PathBuf::from(trimmed)
-    };
+    let expanded: PathBuf =
+        if trimmed == "~" || trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
+            let rest = trimmed
+                .trim_start_matches('~')
+                .trim_start_matches(['/', '\\']);
+            let mut p = home_dir();
+            if !rest.is_empty() {
+                p.push(rest);
+            }
+            p
+        } else {
+            PathBuf::from(trimmed)
+        };
 
     let mut out = PathBuf::new();
     for comp in expanded.components() {
@@ -79,7 +82,10 @@ pub fn breadcrumbs(path: &Path) -> Vec<Crumb> {
                 // `Prefix` carries `C:` for drive paths and the server/share for
                 // UNC. Keep it verbatim so `C:` renders as `C:`.
                 acc.push(prefix.as_os_str());
-                if matches!(prefix.kind(), std::path::Prefix::UNC(..) | std::path::Prefix::VerbatimUNC(..)) {
+                if matches!(
+                    prefix.kind(),
+                    std::path::Prefix::UNC(..) | std::path::Prefix::VerbatimUNC(..)
+                ) {
                     unc_root_done = true;
                 }
                 crumbs.push(Crumb {

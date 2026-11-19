@@ -15,7 +15,11 @@ pub fn icon_for(entry: &Entry) -> (&'static str, u32) {
     if entry.is_dir() {
         return ("folder", 0xd8a838);
     }
-    let ext = entry.extension.as_deref().unwrap_or("").to_ascii_lowercase();
+    let ext = entry
+        .extension
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     match ext.as_str() {
         // ---- ảnh ----
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" | "tif" | "tiff"
@@ -25,13 +29,9 @@ pub fn icon_for(entry: &Entry) -> (&'static str, u32) {
             ("video", 0xfb923c)
         }
         // ---- âm thanh ----
-        "mp3" | "wav" | "flac" | "m4a" | "ogg" | "aac" | "wma" | "opus" => {
-            ("music_note", 0xd9534f)
-        }
+        "mp3" | "wav" | "flac" | "m4a" | "ogg" | "aac" | "wma" | "opus" => ("music_note", 0xd9534f),
         // ---- nén ----
-        "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "cab" => {
-            ("folder_zip", 0xf472b6)
-        }
+        "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "cab" => ("folder_zip", 0xf472b6),
         // ---- mã nguồn ----
         "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "c" | "cpp" | "h" | "hpp" | "cs" | "go"
         | "java" | "kt" | "rb" | "php" | "swift" | "lua" | "json" | "toml" | "yaml" | "yml"
@@ -219,7 +219,10 @@ mod tests {
         assert_eq!(icon_for(&file("a.mp4", Some("mp4"))).0, "video");
         assert_eq!(icon_for(&file("a.rs", Some("rs"))).0, "code");
         assert_eq!(icon_for(&file("a.zip", Some("zip"))).0, "folder_zip");
-        assert_eq!(icon_for(&file("a.unknownext", Some("unknownext"))).0, "document");
+        assert_eq!(
+            icon_for(&file("a.unknownext", Some("unknownext"))).0,
+            "document"
+        );
     }
 
     #[test]
@@ -276,14 +279,20 @@ mod tests {
     fn access_denied_explains_what_to_do() {
         let text = explain_error("access_denied", "Access is denied. (os error 5)");
         assert!(text.contains("quyền"), "phải nói về quyền: {text}");
-        assert!(text.contains("Access is denied"), "giữ chi tiết gốc để còn báo lỗi: {text}");
+        assert!(
+            text.contains("Access is denied"),
+            "giữ chi tiết gốc để còn báo lỗi: {text}"
+        );
     }
 
     #[test]
     fn access_denied_tells_the_user_what_to_do() {
         // "(os error 5)" không nói được gì; câu này phải chỉ ra hành động.
         let text = explain_error("access_denied", "Access is denied. (os error 5)");
-        assert!(text.contains("Run as administrator"), "thiếu gợi ý quyền: {text}");
+        assert!(
+            text.contains("Run as administrator"),
+            "thiếu gợi ý quyền: {text}"
+        );
         assert!(text.contains("thư mục khác"), "thiếu lựa chọn thay thế");
     }
 
@@ -319,7 +328,10 @@ mod tests {
         assert_eq!(widths.len(), 4);
         // Wider names get more room, and the order is preserved.
         assert!(widths[0] < widths[1], "`C:` is narrower than `Users`");
-        assert!(widths[1] < widths[3], "`Users` is narrower than `Documents`");
+        assert!(
+            widths[1] < widths[3],
+            "`Users` is narrower than `Documents`"
+        );
     }
 
     #[test]
@@ -337,7 +349,10 @@ mod tests {
 
     #[test]
     fn the_crumb_line_separates_segments() {
-        let labels: Vec<String> = ["C:", "Users", "me"].iter().map(|s| s.to_string()).collect();
+        let labels: Vec<String> = ["C:", "Users", "me"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(crumb_line(&labels), "C:  ›  Users  ›  me");
     }
 

@@ -14,7 +14,10 @@ pub struct History {
 
 impl History {
     pub fn new(start: PathBuf) -> Self {
-        Self { entries: vec![start], cursor: 0 }
+        Self {
+            entries: vec![start],
+            cursor: 0,
+        }
     }
 
     pub fn current(&self) -> &Path {

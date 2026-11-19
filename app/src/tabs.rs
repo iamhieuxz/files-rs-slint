@@ -1,12 +1,12 @@
-﻿//! Tab operations: open, close, duplicate, cycle, and the group-close commands.
+//! Tab operations: open, close, duplicate, cycle, and the group-close commands.
 //!
 //! Tab bookkeeping is easy to get subtly wrong — closing a tab to the left of the
 //! active one must shift the active index, closing the last one must step back —
 //! so the index arithmetic lives in a pure function with its own tests.
 
-use crate::slint_generated::*;
-use crate::state::{App, Tab};
 use crate::navigation::reload;
+use crate::slint_generated::*;
+use crate::state::{App, Pane, Tab};
 use slint::{ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -31,6 +31,7 @@ pub fn sync_tabs(ui: &AppWindow, app: &App) {
         .collect();
     ui.set_tabs(ModelRc::new(VecModel::from(tabs)));
     ui.set_active_tab(app.active as i32);
+    ui.set_active_pane(SharedString::from(app.active_pane.as_str()));
 }
 
 // ---------------------------------------------------------------- theme
@@ -50,6 +51,7 @@ pub fn reopen_closed_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let mut s = app.borrow_mut();
         s.tabs.push(Tab::new(path));
         s.active = s.tabs.len() - 1;
+        s.active_pane = Pane::Left;
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
@@ -62,6 +64,7 @@ pub fn duplicate_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let mut s = app.borrow_mut();
         s.tabs.push(Tab::new(start));
         s.active = s.tabs.len() - 1;
+        s.active_pane = Pane::Left;
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
@@ -77,7 +80,9 @@ pub fn menu_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) -> Option<usize> {
 /// Make the menu's tab the active one, so the "close others" family acts on it.
 pub fn focus_menu_tab(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     if let Some(idx) = menu_tab(ui, app) {
-        app.borrow_mut().active = idx;
+        let mut s = app.borrow_mut();
+        s.active = idx;
+        s.active_pane = Pane::Left;
     }
 }
 
@@ -97,6 +102,7 @@ pub fn close_tab_at(ui: &AppWindow, app: &Rc<RefCell<App>>, target: Option<usize
         s.tabs.remove(idx);
         s.closed_tabs.push(closed);
         s.active = new_active;
+        s.active_pane = Pane::Left;
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
@@ -138,6 +144,7 @@ pub fn cycle_tab(ui: &AppWindow, app: &Rc<RefCell<App>>, delta: i32) {
         }
         let cur = s.active as i32;
         s.active = (cur + delta).rem_euclid(n as i32) as usize;
+        s.active_pane = Pane::Left;
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
@@ -152,10 +159,15 @@ pub fn close_other_tabs(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let keep = s.active;
         let kept = s.tabs.remove(keep);
         // Every removed tab becomes reopenable, oldest first.
-        let removed: Vec<PathBuf> = s.tabs.drain(..).map(|t| t.current().to_path_buf()).collect();
+        let removed: Vec<PathBuf> = s
+            .tabs
+            .drain(..)
+            .map(|t| t.current().to_path_buf())
+            .collect();
         s.closed_tabs.extend(removed);
         s.tabs.push(kept);
         s.active = 0;
+        s.active_pane = Pane::Left;
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
@@ -182,6 +194,7 @@ pub fn close_tabs_side(ui: &AppWindow, app: &Rc<RefCell<App>>, left: bool) {
             s.closed_tabs.push(path);
         }
         s.active = new_active.min(s.tabs.len().saturating_sub(1));
+        s.active_pane = Pane::Left;
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
@@ -200,11 +213,11 @@ pub fn close_all_tabs(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         }
         s.tabs = vec![Tab::new(start)];
         s.active = 0;
+        s.active_pane = Pane::Left;
     }
     sync_tabs(ui, &app.borrow());
     reload(ui, app);
 }
-
 
 #[cfg(test)]
 mod tests {

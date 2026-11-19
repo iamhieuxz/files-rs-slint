@@ -47,7 +47,11 @@ pub struct SortSpec {
 
 impl Default for SortSpec {
     fn default() -> Self {
-        Self { by: SortBy::Name, direction: SortDirection::Ascending, folders_first: true }
+        Self {
+            by: SortBy::Name,
+            direction: SortDirection::Ascending,
+            folders_first: true,
+        }
     }
 }
 
@@ -142,8 +146,9 @@ impl SortSpec {
             SortBy::Size => cmp_option(a.size, b.size),
             SortBy::DateModified => cmp_option(a.modified_ms, b.modified_ms),
             SortBy::DateCreated => cmp_option(a.created_ms, b.created_ms),
-            SortBy::Extension => cmp_option(a.ext_lower(), b.ext_lower())
-                .then_with(|| natural_cmp(&a.name, &b.name)),
+            SortBy::Extension => {
+                cmp_option(a.ext_lower(), b.ext_lower()).then_with(|| natural_cmp(&a.name, &b.name))
+            }
             SortBy::Kind => {
                 let rank = |e: &Entry| match e.kind {
                     crate::entry::EntryKind::Directory => 0u8,
@@ -151,7 +156,9 @@ impl SortSpec {
                     crate::entry::EntryKind::Symlink => 2,
                     crate::entry::EntryKind::Other => 3,
                 };
-                rank(a).cmp(&rank(b)).then_with(|| natural_cmp(&a.name, &b.name))
+                rank(a)
+                    .cmp(&rank(b))
+                    .then_with(|| natural_cmp(&a.name, &b.name))
             }
         };
 

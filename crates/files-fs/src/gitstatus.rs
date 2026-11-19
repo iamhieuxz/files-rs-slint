@@ -98,9 +98,12 @@ pub fn status_for(dir: &Path) -> StatusMap {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
+    // Porcelain paths are always relative to the repository root, even with
+    // `-C sub`. Joining them with `dir` produced `sub/sub/file.txt`, so the
+    // status column never matched anything below the root.
+    let base = repo_root(dir).unwrap_or_else(|| dir.to_path_buf());
     for (path, state) in parse_porcelain(&text) {
-        // Ghép với `dir` để có đường dẫn tuyệt đối khớp với danh sách tệp.
-        map.insert(dir.join(path), state);
+        map.insert(base.join(path), state);
     }
     map
 }
@@ -195,7 +198,10 @@ mod tests {
         // Cả hai phía sửa: git đánh dấu UU.
         let parsed = parse_porcelain("UU xung-dot.txt\0");
         assert_eq!(parsed[0].1, GitState::Conflicted);
-        assert_eq!(parse_porcelain("AA ca-hai-them.txt\0")[0].1, GitState::Conflicted);
+        assert_eq!(
+            parse_porcelain("AA ca-hai-them.txt\0")[0].1,
+            GitState::Conflicted
+        );
     }
 
     #[test]

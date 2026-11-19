@@ -64,8 +64,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
             };
             DriveInfo {
                 label: mount.trim_end_matches(['\\', '/']).to_string(),
-                name: Some(d.name().to_string_lossy().into_owned())
-                    .filter(|s| !s.is_empty()),
+                name: Some(d.name().to_string_lossy().into_owned()).filter(|s| !s.is_empty()),
                 path: mount,
                 total_bytes: d.total_space(),
                 free_bytes: d.available_space(),

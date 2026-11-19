@@ -17,7 +17,10 @@ pub struct FsError {
 
 impl FsError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into() }
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
     }
 
     pub fn not_found(path: &str) -> Self {

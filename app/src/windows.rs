@@ -1,4 +1,4 @@
-//! Multiple windows.
+﻿//! Multiple windows.
 //!
 //! Slint creates each window from the same component, so "another window" means
 //! another `AppWindow` plus another [`App`] holding its own tabs. The two must
@@ -49,6 +49,10 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
     let app = Rc::new(RefCell::new(App {
         tabs: vec![state::Tab::new(start)],
         active: 0,
+        right: None,
+        active_pane: state::Pane::Left,
+        loads: Default::default(),
+        next_load_token: 1,
         show_hidden: saved.show_hidden,
         show_sidebar: saved.show_sidebar,
         show_preview: saved.show_preview,
@@ -56,9 +60,8 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
         dark: saved.dark,
         clipboard: Vec::new(),
         clipboard_cut: false,
-        load_token: 0,
-        load_in_flight: false,
         grid_width: 900.0,
+        right_grid_width: 900.0,
         worker,
         results,
         watch: None,
@@ -75,6 +78,9 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
         settings_path,
         undo: Default::default(),
         git_status: Default::default(),
+        open_with: Vec::new(),
+        operation_started: None,
+        drag: Default::default(),
     }));
 
     navigation::build_sidebar(&ui, &app.borrow());
@@ -91,6 +97,7 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
     window::install_state_poller(&ui);
 
     ui.show()?;
+    crate::native_drop::install(&ui, &app);
 
     // Giữ cửa sổ sống trong danh sách; đóng cửa sổ thì dọn khỏi danh sách.
     let closed = Rc::new(std::cell::Cell::new(false));
@@ -137,6 +144,7 @@ pub fn sweep() {
         // Ẩn tường minh trước khi bỏ: `Drop` của `AppWindow` có thể không chạy
         // ngay, và một cửa sổ đã đóng mà còn hiện là lỗi thấy được.
         for w in list.iter().filter(|w| w.closed.get()) {
+            crate::native_drop::revoke(&w.ui);
             let _ = w.ui.hide();
         }
         list.retain(|w| !w.closed.get());
@@ -150,14 +158,10 @@ pub fn sweep() {
     });
 }
 
-
-
-
 /// True when no window is left open.
 pub fn is_empty() -> bool {
     LIVE.with(|live| live.borrow().is_empty())
 }
-
 
 #[cfg(test)]
 mod tests {

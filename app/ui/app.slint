@@ -1,41 +1,20 @@
-// Khung ứng dụng: tab strip, command bar, breadcrumb/omnibar, sidebar, danh sách,
-// preview pane, status bar. Bố cục theo Files (files.community): tab ở trên cùng,
-// thanh lệnh dưới tab, breadcrumb nằm trong command bar, sidebar bên trái,
-// status bar ghim đáy.
+// Khung ứng dụng: title bar gộp tab, address bar, command bar, sidebar, danh sách,
+// preview pane, status bar. Bố cục theo Files (files.community).
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { FluentIcon } from "icons.slint";
 import {
-    ClipboardChip, CommandButton, DialogSurface, FluentButton, FluentTextBox, IconButton,
-    MenuItem, MenuPopup, SidebarItem, TabItem,
+    ClipboardChip, CommandButton, CommandSeparator, DialogSurface, FluentButton, FluentTextBox,
+    IconButton, MenuItem, MenuPopup, SidebarItem, TabItem, WindowControl,
 } from "widgets.slint";
 
 // Rust cần `ui.global::<Theme>()` để bật dark mode, nên global phải được
 // re-export từ document gốc.
 export { Theme }
 
-export struct FileRow {
-    name: string,
-    path: string,
-    is-dir: bool,
-    is-hidden: bool,
-    selected: bool,
-    size: string,
-    modified: string,
-    kind: string,
-    icon: string,
-    glyph: color,
-    // Chữ cái trạng thái git (U/M/S/D/!), rỗng khi không có hoặc không phải repo.
-    git-letter: string,
-    git-color: color,
-    // Icon thật của Windows (exe, msi, lnk…). Rỗng thì dùng `icon` + `glyph`.
-    icon-image: image,
-    has-icon-image: bool,
-    // Vị trí trong danh sách đang hiển thị; cần cho grid vì ở đó mỗi ô
-    // không còn chỉ số dòng như trong vòng lặp or row[i].
-    index: int,
-}
+import { FileRow } from "file_row.slint";
+import { SecondaryPane } from "dual_pane.slint";
 
 export struct NavEntry {
     id: string,
@@ -103,18 +82,61 @@ export component AppWindow inherits Window {
     in-out property <[FileRow]> rows;
     // Grid cần nhóm theo hàng: Slint GridLayout không tự xuống dòng.
     in-out property <[[FileRow]]> grid-rows;
+    // Chế độ hai khung: khung phải có model và đường dẫn riêng.
+    in-out property <bool> dual-pane: false;
+    in-out property <[FileRow]> right-rows;
+    in-out property <[[FileRow]]> right-grid-rows;
+    in-out property <string> left-path;
+    in-out property <string> right-path;
+    in-out property <bool> right-loading: false;
+    in-out property <string> right-error-text;
+    in-out property <string> right-sort-column: "name";
+    in-out property <bool> right-sort-desc: false;
+    // "left" | "right" — khung đang nhận lệnh.
+    in-out property <string> active-pane: "left";
+    // Bề rộng mỗi khung khi chia đôi, do Rust tính từ bề rộng cửa sổ và
+    // panel đang mở. Không bind từ root.width trong Slint để tránh vòng lặp.
+    in-out property <length> pane-half-width: 480px;
+    callback pane-area-width(length);
+    // Kéo-thả nội bộ và tệp từ Explorer.
+    in-out property <bool> drag-active: false;
+    in-out property <bool> drag-external: false;
+    in-out property <bool> drag-copy: true;
+    in-out property <int> drag-count: 0;
+    in-out property <length> drag-x;
+    in-out property <length> drag-y;
+    in-out property <string> drag-target;
+    in-out property <string> drop-sidebar-path;
     in-out property <int> selection-count: 0;
     // Mục đang chọn có phải tệp nén không (bật/tắt nút Giải nén).
     in-out property <bool> selection-is-archive: false;
     in-out property <string> status-primary;
     in-out property <string> status-secondary;
     in-out property <string> status-tertiary;
+    // Thông báo ngắn (đã tạo, đã sao chép…). Tách khỏi `status-tertiary` để
+    // `push_status` không xoá mất thông báo mỗi lần danh sách được vẽ lại.
+    in-out property <string> status-message;
+    // Có đang rê chuột lên breadcrumb; tooltip ở vùng nội dung đọc cờ này
+    // vì id của TouchArea nằm ngoài phạm vi phần tử đó.
+    in-out property <bool> crumb-hovered: false;
     in-out property <string> error-text;
     in-out property <bool> can-back: false;
     in-out property <bool> can-forward: false;
     in-out property <bool> show-hidden: false;
     in-out property <bool> show-sidebar: true;
+    in-out property <bool> drives-expanded: true;
     in-out property <bool> show-preview: true;
+    // Bề rộng vùng danh sách; cột phụ chỉ hiện khi đủ chỗ (tránh bị preview cắt).
+    in-out property <length> content-width: 1000px;
+    // Thứ tự cột và bề rộng từng cột (kéo giãn/đổi thứ tự như Excel).
+    in-out property <[string]> column-order: ["name", "tag", "modified", "kind", "git", "size"];
+    in-out property <length> col-name-width: 240px;
+    in-out property <length> col-tag-width: 100px;
+    in-out property <length> col-modified-width: 140px;
+    in-out property <length> col-kind-width: 100px;
+    in-out property <length> col-size-width: 90px;
+    // Cột đang được kéo rộng để tô sáng điểm neo.
+    in-out property <string> resizing-column: "";
     in-out property <int> view-mode: 0;      // 0 = details, 1 = grid
     in-out property <string> sort-column: "name";
     in-out property <bool> sort-desc: false;
@@ -130,6 +152,19 @@ export component AppWindow inherits Window {
     // Có thao tác đang chạy và huỷ được.
     in-out property <bool> cancellable: false;
     callback cancel-operation();
+
+    // Thẻ tiến trình nổi cho thao tác dài (nén, sao chép, băm…).
+    in-out property <bool> operation-running: false;
+    in-out property <bool> operation-visible: false;
+    in-out property <string> operation-title;
+    // 0 = đang chạy, 1 = xong, 2 = lỗi.
+    in-out property <int> operation-tone: 0;
+    in-out property <int> operation-seconds: 0;
+    in-out property <int> operation-done: 0;
+    // 0 = chưa biết tổng (thanh tiến trình chạy vô định).
+    in-out property <int> operation-total: 0;
+    in-out property <float> operation-phase: 0;
+    callback dismiss-operation();
 
     // preview
     in-out property <string> preview-kind: "none";
@@ -159,6 +194,9 @@ export component AppWindow inherits Window {
     in-out property <length> menu-x;
     in-out property <length> menu-y;
     in-out property <[MenuItem]> menu-items;
+    // Danh sách ứng dụng trong menu con "Mở bằng".
+    in-out property <bool> open-with-open: false;
+    in-out property <[MenuItem]> open-with-items;
 
     // Command Palette
     in-out property <bool> palette-open: false;
@@ -180,6 +218,8 @@ export component AppWindow inherits Window {
     callback toggle-sidebar();
     callback toggle-preview();
     callback set-view-mode(int);
+    // Bề rộng vùng danh sách thay đổi: Rust tính lại số cột cho lưới.
+    callback grid-width-changed(length);
     callback new-tab();
     callback close-tab(int);
     callback select-tab(int);
@@ -187,6 +227,7 @@ export component AppWindow inherits Window {
     callback dialog-confirm(string);
     callback dialog-cancel();
     callback menu-activated(string);
+    callback open-with-activated(string);
     callback dismiss-menu();
     callback start-filter();
     callback filter-changed(string);
@@ -194,6 +235,20 @@ export component AppWindow inherits Window {
     callback sidebar-activated(string);
     callback sidebar-toggled(string);
     callback row-context-menu(int, length, length);
+    // Khung phải có bộ callback riêng; Rust chuyển active-pane trước khi xử lý.
+    callback pane-activated(string);
+    callback right-open-row(int);
+    callback right-select-row(int, int);
+    callback right-row-context-menu(int, length, length);
+    callback right-background-context-menu(length, length);
+    callback right-sort-by(string);
+    callback right-grid-width-changed(length);
+    callback drag-start(string, int, length, length, bool);
+    callback drag-move(length, length, bool);
+    callback drag-drop(length, length, bool);
+    callback drag-cancel();
+    callback pane-geometry(string, length, length, length, length);
+    callback sidebar-zone(string, length, length, length, length);
     // Menu chuột phải trên tab; `menu-tab` cho biết tab đang nhắm tới.
     callback tab-context-menu(int, length, length);
     in-out property <int> menu-tab: -1;
@@ -209,52 +264,67 @@ export component AppWindow inherits Window {
     callback window-toggle-maximize();
     callback window-close();
     callback window-drag(length, length);
+    // Kéo cột / đổi thứ tự cột / kéo viền cửa sổ.
+    callback column-resized(string, length);
+    callback column-moved(string, int);
+    callback window-resize(string);
 
     // ---- bàn phím ----
     key-root := FocusScope {
         key-pressed(event) => {
+            // Giữ Shift làm `event.text` thành chữ hoa ("P" thay vì "p").
+            // Chuẩn hoá một lần để mọi tổ hợp Ctrl+Shift+… hoạt động; trước đây
+            // chỉ Ctrl+<chữ thường> chạy, còn Ctrl+Shift+T/F/C/Z/P/N đều câm.
+            let key = event.text.to-lowercase();
             if (event.modifiers.control) {
-                if (event.text == "l") { root.start-edit-address(); return accept; }
-                if (event.text == "t") {
+                if (key == "l") { root.start-edit-address(); return accept; }
+                if (key == "t") {
                     // Ctrl+Shift+T mở lại tab vừa đóng; Ctrl+T mở tab mới.
                     if (event.modifiers.shift) { root.command("reopen-tab"); }
                     else { root.new-tab(); }
                     return accept;
                 }
-                if (event.text == "w") { root.close-tab(root.active-tab); return accept; }
+                if (key == "w") { root.close-tab(root.active-tab); return accept; }
                 // Ctrl+Tab / Ctrl+Shift+Tab chuyển tab.
                 if (event.text == Key.Tab) {
                     if (event.modifiers.shift) { root.command("prev-tab"); }
                     else { root.command("next-tab"); }
                     return accept;
                 }
-                if (event.text == "c") {
+                if (key == "c") {
                     // Ctrl+Shift+C sao chép đường dẫn của mục đang chọn.
                     if (event.modifiers.shift) { root.command("copy-path"); }
                     else { root.command("copy"); }
                     return accept;
                 }
-                if (event.text == "x") { root.command("cut"); return accept; }
-                if (event.text == "v") { root.command("paste"); return accept; }
+                if (key == "x") { root.command("cut"); return accept; }
+                if (key == "v") { root.command("paste"); return accept; }
                 // Ctrl+Z hoàn tác, Ctrl+Shift+Z hoặc Ctrl+Y làm lại.
-                if (event.text == "z") {
+                if (key == "z") {
                     if (event.modifiers.shift) { root.command("redo"); }
                     else { root.command("undo"); }
                     return accept;
                 }
-                if (event.text == "y") { root.command("redo"); return accept; }
-                if (event.text == "a") { root.command("select-all"); return accept; }
-                if (event.text == "h") { root.command("toggle-hidden"); return accept; }
-                if (event.text == "f") {
+                if (key == "y") { root.command("redo"); return accept; }
+                if (key == "a") { root.command("select-all"); return accept; }
+                if (key == "h") { root.command("toggle-hidden"); return accept; }
+                if (key == "f") {
                     // Ctrl+Shift+F tìm đệ quy; Ctrl+F chỉ lọc trong thư mục.
                     if (event.modifiers.shift) { root.command("search-recursive"); }
                     else { root.start-filter(); }
                     return accept;
                 }
-                if (event.text == "r") { root.refresh(); return accept; }
-                if (event.text == "d") { root.command("duplicate-tab"); return accept; }
+                if (key == "r") { root.refresh(); return accept; }
+                if (key == "d") { root.command("duplicate-tab"); return accept; }
+                // Ctrl+N cửa sổ mới; Ctrl+Shift+N thư mục mới — đúng nhãn
+                // đang hiện trong palette và menu ngữ cảnh.
+                if (key == "n") {
+                    if (event.modifiers.shift) { root.command("new-folder"); }
+                    else { root.command("new-window"); }
+                    return accept;
+                }
                 // Ctrl+Shift+P mở Command Palette.
-                if (event.text == "p" && event.modifiers.shift) { root.open-palette(); return accept; }
+                if (key == "p" && event.modifiers.shift) { root.open-palette(); return accept; }
             }
             if (event.text == Key.F5) { root.refresh(); return accept; }
             if (event.text == Key.F2) { root.command("rename"); return accept; }
@@ -269,9 +339,13 @@ export component AppWindow inherits Window {
                 root.command("open-selected"); return accept;
             }
             if (event.text == Key.Escape) {
-                if (root.palette-open) { root.close-palette(); return accept; }
-                if (root.menu-open) { root.dismiss-menu(); return accept; }
-                if (root.filtering) { root.end-filter(); return accept; }
+                if (root.palette-open) { key-root.focus(); root.close-palette(); return accept; }
+                if (root.menu-open) {
+                    if (root.open-with-open) { key-root.focus(); root.open-with-open = false; return accept; }
+                    key-root.focus(); root.dismiss-menu(); return accept;
+                }
+                if (root.dialog-open) { key-root.focus(); root.dialog-cancel(); return accept; }
+                if (root.filtering) { key-root.focus(); root.end-filter(); return accept; }
                 if (root.editing-address) { root.end-edit-address(); return accept; }
             }
             if (event.text == Key.UpArrow && !root.editing-address && !root.filtering) {
@@ -285,17 +359,17 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
-        // ================= TITLE BAR TỰ VẼ =================
-        // Cửa sổ không có khung Windows (no-frame), nên phần này thay cho
-        // title bar hệ thống. Nút cửa sổ kiểu Windows 11: rộng 46px, hover nền
-        // nhạt, riêng nút đóng hover đỏ.
+        // ================= TITLE BAR + TABS =================
+        // Cửa sổ không có khung Windows; tab nằm ngay trong title bar như Files.
+        // Không còn tên ứng dụng: icon folder + "Files RS" chỉ chiếm chỗ.
         Rectangle {
-            height: 36px;
-            background: Theme.solid-secondary;
+            height: Theme.tab-height;
+            background: Theme.solid-base;
 
-            // Vùng kéo khai báo TRƯỚC các nút để các nút nằm trên và nhận click.
-            // Bề rộng chừa đúng 138px cho 3 nút cửa sổ bên phải.
+            // Nền kéo cửa sổ nằm dưới tab; nút cửa sổ nằm ngoài vùng này.
             TouchArea {
+                x: 0;
+                y: 0;
                 width: parent.width - 138px;
                 height: parent.height;
                 pointer-event(e) => {
@@ -305,204 +379,98 @@ export component AppWindow inherits Window {
                 }
             }
 
-            HorizontalLayout {
-                padding-left: Theme.s3;
-                spacing: Theme.s2;
-                FluentIcon {
-                    name: "folder";
-                    width: 16px;
-                    height: 16px;
-                    y: (parent.height - self.height) / 2;
-                    tint: Theme.accent;
-                }
-                Text {
-                    text: "Files RS";
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-caption;
-                    vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width - 138px;
+                height: parent.height;
+                clip: true;
 
-            HorizontalLayout {
-                alignment: end;
-                spacing: 0px;
-                Rectangle {
-                    width: 46px;
-                    height: parent.height;
-                    background: min-ta.has-hover ? Theme.subtle-hover : transparent;
-                    FluentIcon {
-                        name: "chevron_down";
-                        width: 10px;
-                        height: 10px;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        tint: Theme.text-secondary;
+                HorizontalLayout {
+                    padding-left: Theme.s2;
+                    padding-right: Theme.s2;
+                    padding-top: 3px;
+                    padding-bottom: 3px;
+                    spacing: Theme.s1;
+                    alignment: start;
+
+                    for tab[i] in root.tabs: TabItem {
+                        label: tab.title;
+                        icon: tab.icon;
+                        active: i == root.active-tab;
+                        clicked => { root.select-tab(i); }
+                        closed => { root.close-tab(i); }
+                        right-clicked => { root.tab-context-menu(i, self.absolute-position.x, self.absolute-position.y); }
                     }
-                    min-ta := TouchArea { clicked => { root.window-minimize(); } }
-                }
-                Rectangle {
-                    width: 46px;
-                    height: parent.height;
-                    background: max-ta.has-hover ? Theme.subtle-hover : transparent;
-                    FluentIcon {
-                        name: root.is-maximized ? "arrow_minimize" : "square_multiple";
-                        width: 10px;
-                        height: 10px;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        tint: Theme.text-secondary;
+                    Rectangle {
+                        width: 32px;
+                        height: 32px;
+                        border-radius: Theme.r-sm;
+                        background: plus-ta.pressed ? Theme.subtle-pressed
+                            : plus-ta.has-hover ? Theme.subtle-hover : transparent;
+                        FluentIcon {
+                            name: "add";
+                            width: 14px;
+                            height: 14px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            tint: Theme.text-secondary;
+                        }
+                        plus-ta := TouchArea { clicked => { root.new-tab(); } }
                     }
-                    max-ta := TouchArea { clicked => { root.window-toggle-maximize(); } }
-                }
-                Rectangle {
-                    width: 46px;
-                    height: parent.height;
-                    background: close-ta.has-hover ? #c42b1c : transparent;
-                    FluentIcon {
-                        name: "dismiss";
-                        width: 10px;
-                        height: 10px;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        tint: close-ta.has-hover ? #ffffff : Theme.text-secondary;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: Theme.tab-height - 6px;
+                        // Vùng trống còn lại của title bar: kéo cửa sổ như title
+                        // bar hệ thống. TouchArea thật để không bị tab strip nuốt.
+                        drag-ta := TouchArea {
+                            x: 0;
+                            y: 0;
+                            width: parent.width;
+                            height: parent.height;
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                                    root.window-drag(self.mouse-x, self.mouse-y);
+                                }
+                            }
+                        }
                     }
-                    close-ta := TouchArea { clicked => { root.window-close(); } }
                 }
             }
 
-        }
+            // Ba nút cửa sổ neo vào mép phải, không bị tab đẩy đi.
+            Rectangle {
+                x: parent.width - 138px;
+                y: (parent.height - 32px) / 2;
+                width: 138px;
+                height: 32px;
 
-        // ================= TAB STRIP =================
-        Rectangle {
-            height: Theme.tab-height;
-            background: Theme.solid-secondary;
+                HorizontalLayout {
+                    spacing: 0px;
 
-            HorizontalLayout {
-                padding-left: Theme.s2;
-                padding-right: Theme.s2;
-                padding-top: 6px;
-                spacing: Theme.s1;
-                alignment: start;
-
-                for tab[i] in root.tabs: TabItem {
-                    label: tab.title;
-                    icon: tab.icon;
-                    active: i == root.active-tab;
-                    clicked => { root.select-tab(i); }
-                    closed => { root.close-tab(i); }
-                    right-clicked => { root.tab-context-menu(i, self.absolute-position.x, self.absolute-position.y); }
-                }
-                Rectangle {
-                    width: 32px;
-                    height: 30px;
-                    border-radius: Theme.r-sm;
-                    background: plus-ta.pressed ? Theme.subtle-pressed
-                        : plus-ta.has-hover ? Theme.subtle-hover : transparent;
-                    FluentIcon {
-                        name: "add";
-                        width: 14px;
-                        height: 14px;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        tint: Theme.text-secondary;
+                    WindowControl { kind: "minimize"; clicked => { root.window-minimize(); } }
+                    WindowControl {
+                        kind: root.is-maximized ? "restore" : "maximize";
+                        clicked => { root.window-toggle-maximize(); }
                     }
-                    plus-ta := TouchArea { clicked => { root.new-tab(); } }
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
-        }
-
-        // ================= COMMAND BAR =================
-        // Hàng lệnh chính của Files: New | Cut | Copy | Paste | Delete | Sort | View
-        Rectangle {
-            height: Theme.commandbar-height;
-            background: Theme.solid-secondary;
-
-            HorizontalLayout {
-                padding-left: Theme.s2;
-                padding-right: Theme.s2;
-                spacing: Theme.s1;
-                // alignment cố định để nhóm lệnh bám trái; chip clipboard vẫn
-                // dạt phải nhờ Rectangle co giãn đứng trước nó.
-                alignment: start;
-
-                CommandButton {
-                    label: "Mới";
-                    icon: "add";
-                    split: true;
-                    clicked => { root.command("new-folder"); }
-                    menu-clicked => { root.command("new-menu"); }
-                }
-                Rectangle { width: Theme.s1; }
-                IconButton { icon: "cut"; accessible-text: "Cắt"; enabled: root.selection-count > 0; clicked => { root.command("cut"); } }
-                IconButton { icon: "copy"; accessible-text: "Sao chép"; enabled: root.selection-count > 0; clicked => { root.command("copy"); } }
-                IconButton { icon: "clipboard_paste"; accessible-text: "Dán"; enabled: root.clipboard-count > 0; clicked => { root.command("paste"); } }
-                IconButton { icon: "rename"; accessible-text: "Đổi tên"; enabled: root.selection-count == 1; clicked => { root.command("rename"); } }
-                IconButton { icon: "delete"; accessible-text: "Xoá"; enabled: root.selection-count > 0; clicked => { root.command("delete"); } }
-
-                Rectangle { width: Theme.s1; }
-
-                // Nén / giải nén: chỉ bật khi lựa chọn phù hợp.
-                IconButton {
-                    icon: "folder_zip";
-                    accessible-text: "Nén thành ZIP";
-                    enabled: root.selection-count > 0;
-                    clicked => { root.command("compress"); }
-                }
-                IconButton {
-                    icon: "folder_open";
-                    accessible-text: "Giải nén";
-                    enabled: root.selection-count == 1 && root.selection-is-archive;
-                    clicked => { root.command("extract"); }
-                }
-
-                Rectangle { width: Theme.s1; }
-
-                // chuyển kiểu xem
-                IconButton {
-                    icon: "list";
-                    accessible-text: "Xem dạng danh sách";
-                    checked: root.view-mode == 0;
-                    clicked => { root.set-view-mode(0); }
-                }
-                IconButton {
-                    icon: "grid";
-                    accessible-text: "Xem dạng lưới";
-                    checked: root.view-mode == 1;
-                    clicked => { root.set-view-mode(1); }
-                }
-                IconButton {
-                    icon: "eye";
-                    accessible-text: "Ẩn hoặc hiện mục ẩn";
-                    checked: root.show-hidden;
-                    clicked => { root.toggle-hidden(); }
-                }
-                IconButton {
-                    icon: "arrow_sort";
-                    accessible-text: "Sắp xếp";
-                    checked: root.sort-desc;
-                    clicked => { root.sort-by(root.sort-column); }
-                }
-
-                Rectangle { horizontal-stretch: 1; }
-
-                if root.clipboard-count > 0: ClipboardChip {
-                    mode: root.clipboard-mode;
-                    count: root.clipboard-count;
+                    WindowControl { kind: "close"; clicked => { root.window-close(); } }
                 }
             }
         }
 
         // ================= ĐỊA CHỈ / OMNIBAR =================
         Rectangle {
-            height: Theme.addressbar-height + Theme.s2;
-            background: Theme.solid-secondary;
+            height: Theme.addressbar-height + Theme.s3;
+            background: Theme.solid-base;
 
             HorizontalLayout {
                 padding-left: Theme.s2;
                 padding-right: Theme.s2;
+                padding-top: 6px;
+                padding-bottom: 6px;
                 spacing: Theme.s1;
+                // stretch: breadcrumb giãn hết phần còn lại (start sẽ làm nó 0px).
+                alignment: stretch;
 
                 IconButton { icon: "arrow_left"; accessible-text: "Quay lại"; enabled: root.can-back; clicked => { root.go-back(); } }
                 IconButton { icon: "arrow_right"; accessible-text: "Tiến tới"; enabled: root.can-forward; clicked => { root.go-forward(); } }
@@ -530,73 +498,71 @@ export component AppWindow inherits Window {
                             color: Theme.text-primary;
                             font-size: Theme.font-body;
                             text: root.address-text;
-                            accepted => { root.address-submitted(self.text); }
+                            accepted => { key-root.focus(); root.address-submitted(self.text); }
+                            key-pressed(event) => {
+                                if (event.text == Key.Escape) { root.end-edit-address(); return accept; }
+                                reject
+                            }
+                            init => { self.focus(); }
                         }
                     }
-                    if !root.editing-address: HorizontalLayout {
-                        padding-left: Theme.s2;
-                        padding-right: Theme.s2;
-                        spacing: Theme.s1;
-                        alignment: start;
-                        FluentIcon {
-                            name: "folder";
-                            width: 16px;
-                            height: 16px;
-                            y: (parent.height - self.height) / 2;
-                            tint: Theme.glyph-folder;
+                    if !root.editing-address: Rectangle {
+                        Rectangle {
+                            x: 0;
+                            y: 0;
+                            width: parent.width;
+                            height: parent.height;
+                            crumb-hover := TouchArea {
+                                clicked => { }
+                                changed has-hover => {
+                                    root.crumb-hovered = self.has-hover;
+                                }
+                            }
                         }
-                        // Một Text duy nhất: nằm trực tiếp trong layout nên tự nở
-                        // theo nội dung. Nhiều Text rời sẽ bị layout ép cùng bề
-                        // rộng và đè lên nhau.
-                        // Vùng rê chuột để hiện đường dẫn đầy đủ: breadcrumb bị
-                        // elide nên thư mục sâu không đọc hết được.
-                        crumb-hover := TouchArea {
-                            clicked => { }
-                        }
-                        Text {
-                            text: root.crumb-text;
-                            color: Theme.text-primary;
-                            font-size: Theme.font-body;
-                            vertical-alignment: center;
-                            overflow: elide;
-
-                            horizontal-stretch: 1;
+                        HorizontalLayout {
+                            x: Theme.s2;
+                            y: 0;
+                            width: parent.width - Theme.s4;
+                            height: parent.height;
+                            spacing: Theme.s1;
+                            alignment: start;
+                            FluentIcon {
+                                name: "folder";
+                                width: 16px;
+                                height: 16px;
+                                y: (parent.height - self.height) / 2;
+                                tint: Theme.glyph-folder;
+                            }
+                            Text {
+                                text: root.crumb-text;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
                         }
                     }
                 }
 
-                Rectangle { width: Theme.s1; }
+                // Tách search khỏi breadcrumb: trước đây ba icon dính nhau
+                // (search + sidebar + preview) trông như một cụm nút lỗi.
+                CommandSeparator { }
 
                 // ô lọc nhanh: hiện khi người dùng bấm Ctrl+F
                 if root.filtering: Rectangle {
-                    width: 200px;
+                    width: 260px;
+                    height: Theme.control-height;
                     FluentTextBox {
-                        placeholder: "Lọc theo tên";
+                        placeholder: "Tìm kiếm";
                         leading-icon: "search";
                         text <=> root.filter-text;
-                        accepted => { root.end-filter(); }
+                        accepted => { key-root.focus(); root.end-filter(); }
                         edited(t) => { root.filter-changed(t); }
+                        cancelled => { key-root.focus(); root.end-filter(); }
                     }
                 }
                 if !root.filtering: IconButton { icon: "search"; accessible-text: "Tìm kiếm"; clicked => { root.start-filter(); } }
-
-                if root.clipboard-count > 0: ClipboardChip {
-                    mode: root.clipboard-mode;
-                    count: root.clipboard-count;
-                }
-
-                IconButton {
-                    icon: "panel_left";
-                    accessible-text: "Ẩn hoặc hiện thanh bên";
-                    checked: !root.show-sidebar;
-                    clicked => { root.toggle-sidebar(); }
-                }
-                IconButton {
-                    icon: "panel_right";
-                    accessible-text: "Ẩn hoặc hiện panel xem trước";
-                    checked: root.show-preview;
-                    clicked => { root.toggle-preview(); }
-                }
             }
         }
 
@@ -607,7 +573,15 @@ export component AppWindow inherits Window {
             // ---- Sidebar ----
             if root.show-sidebar: Rectangle {
                 width: Theme.sidebar-width;
-                background: Theme.solid-secondary;
+                background: Theme.solid-base;
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    y: 0;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.stroke-divider;
+                }
                 VerticalLayout {
                     padding-top: Theme.s2;
                     padding-bottom: Theme.s2;
@@ -627,46 +601,336 @@ export component AppWindow inherits Window {
                                 expandable: item.expandable;
                                 expanded: item.expanded;
                                 active: root.address-text == item.path;
+                                drop-path: item.path;
+                                drop-active: root.drop-sidebar-path == item.path;
                                 clicked => { root.sidebar-activated(item.id); }
                                 toggle-expanded => { root.sidebar-toggled(item.id); }
+                                geometry(path, x, y, w, h) => { root.sidebar-zone(path, x, y, w, h); }
                             }
 
                             Rectangle { height: Theme.s3; }
                             Rectangle {
-                                height: 28px;
-                                Text {
-                                    x: Theme.s2;
-                                    text: "Ổ đĩa";
-                                    color: Theme.text-tertiary;
-                                    font-size: Theme.font-caption;
-                                    font-weight: Theme.weight-semibold;
-                                    vertical-alignment: center;
+                                height: 32px;
+                                HorizontalLayout {
+                                    padding-left: Theme.s2;
+                                    padding-right: Theme.s2;
+                                    spacing: Theme.s1;
+                                    alignment: start;
+                                    FluentIcon {
+                                        name: root.drives-expanded ? "chevron_down" : "chevron_right";
+                                        width: 12px;
+                                        height: 12px;
+                                        y: (parent.height - self.height) / 2;
+                                        tint: Theme.text-tertiary;
+                                    }
+                                    Text {
+                                        text: "Ổ đĩa";
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.font-caption;
+                                        font-weight: Theme.weight-semibold;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                drive-header-ta := TouchArea {
+                                    x: 0;
+                                    y: 0;
+                                    width: parent.width;
+                                    height: parent.height;
+                                    clicked => { root.drives-expanded = !root.drives-expanded; }
                                 }
                             }
-                            for item in root.drives: SidebarItem {
-                                label: item.label;
-                                icon: item.icon;
-                                glyph: item.glyph;
-                                indent: item.indent;
-                                expandable: item.expandable;
-                                expanded: item.expanded;
-                                active: root.address-text == item.path;
-                                clicked => { root.sidebar-activated(item.id); }
-                                toggle-expanded => { root.sidebar-toggled(item.id); }
+                            if root.drives-expanded: VerticalLayout {
+                                spacing: 1px;
+                                for item in root.drives: SidebarItem {
+                                    label: item.label;
+                                    icon: item.icon;
+                                    glyph: item.glyph;
+                                    indent: item.indent;
+                                    expandable: item.expandable;
+                                    expanded: item.expanded;
+                                    active: root.address-text == item.path;
+                                    drop-path: item.path;
+                                    drop-active: root.drop-sidebar-path == item.path;
+                                    clicked => { root.sidebar-activated(item.id); }
+                                    toggle-expanded => { root.sidebar-toggled(item.id); }
+                                    geometry(path, x, y, w, h) => { root.sidebar-zone(path, x, y, w, h); }
+                                }
                             }
                         }
+                    }
+
+                    Rectangle { height: 1px; background: Theme.stroke-divider; }
+                    Rectangle { height: Theme.s1; }
+                    SidebarItem {
+                        label: "Cài đặt";
+                        icon: "settings";
+                        glyph: Theme.text-secondary;
+                        clicked => { root.command("open-default-apps"); }
+                    }
+                    Rectangle { height: Theme.s2; }
+                }
+            }
+
+            // ---- Main pane: command bar + list/preview ----
+            VerticalLayout {
+                horizontal-stretch: 1;
+
+            // ================= COMMAND BAR =================
+            Rectangle {
+                height: Theme.commandbar-height;
+                background: Theme.solid-base;
+
+                HorizontalLayout {
+                    padding-left: Theme.s2;
+                    padding-right: Theme.s2;
+                    padding-top: Theme.s2;
+                    padding-bottom: Theme.s2;
+                    spacing: Theme.s1;
+                    // stretch: spacer giãn để nhóm bên phải dạt mép.
+                    alignment: stretch;
+
+                    CommandButton {
+                        width: 96px;
+                        label: "Mới";
+                        icon: "add";
+                        split: true;
+                        clicked => { root.command("new-folder"); }
+                        menu-clicked => { root.command("new-menu"); }
+                    }
+                    CommandSeparator { }
+
+                    IconButton { icon: "cut"; accessible-text: "Cắt"; enabled: root.selection-count > 0; clicked => { root.command("cut"); } }
+                    IconButton { icon: "copy"; accessible-text: "Sao chép"; enabled: root.selection-count > 0; clicked => { root.command("copy"); } }
+                    IconButton { icon: "clipboard_paste"; accessible-text: "Dán"; enabled: root.clipboard-count > 0; clicked => { root.command("paste"); } }
+                    CommandSeparator { }
+
+                    IconButton { icon: "rename"; accessible-text: "Đổi tên"; enabled: root.selection-count == 1; clicked => { root.command("rename"); } }
+                    IconButton { icon: "delete"; accessible-text: "Xoá"; enabled: root.selection-count > 0; clicked => { root.command("delete"); } }
+                    CommandSeparator { }
+
+                    // Nén / giải nén: chỉ bật khi lựa chọn phù hợp.
+                    IconButton {
+                        icon: "folder_zip";
+                        accessible-text: "Nén thành ZIP";
+                        enabled: root.selection-count > 0;
+                        clicked => { root.command("compress"); }
+                    }
+                    CommandButton {
+                        width: 120px;
+                        label: "Giải nén";
+                        icon: "folder_open";
+                        enabled: root.selection-count == 1 && root.selection-is-archive;
+                        clicked => { root.command("extract"); }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    if root.clipboard-count > 0: ClipboardChip {
+                        mode: root.clipboard-mode;
+                        count: root.clipboard-count;
+                    }
+
+                    // Nhóm bên phải giống Files: lọc/ẩn, sắp xếp, kiểu xem, panel.
+                    IconButton {
+                        icon: "eye";
+                        accessible-text: "Ẩn hoặc hiện mục ẩn";
+                        checked: root.show-hidden;
+                        clicked => { root.toggle-hidden(); }
+                    }
+                    IconButton {
+                        icon: "arrow_sort";
+                        accessible-text: "Sắp xếp";
+                        checked: root.sort-desc;
+                        clicked => { root.sort-by(root.sort-column); }
+                    }
+                    IconButton {
+                        icon: "list";
+                        accessible-text: "Xem dạng danh sách";
+                        checked: root.view-mode == 0;
+                        clicked => { root.set-view-mode(0); }
+                    }
+                    IconButton {
+                        icon: "grid";
+                        accessible-text: "Xem dạng lưới";
+                        checked: root.view-mode == 1;
+                        clicked => { root.set-view-mode(1); }
+                    }
+                    CommandSeparator { }
+                    IconButton {
+                        icon: "panel_split";
+                        accessible-text: "Bật hoặc tắt hai khung";
+                        checked: root.dual-pane;
+                        clicked => { root.command("toggle-dual-pane"); }
+                    }
+                    IconButton {
+                        icon: "panel_left";
+                        accessible-text: "Ẩn hoặc hiện thanh bên";
+                        checked: !root.show-sidebar;
+                        clicked => { root.toggle-sidebar(); }
+                    }
+                    IconButton {
+                        icon: "panel_right";
+                        accessible-text: "Ẩn hoặc hiện panel xem trước";
+                        checked: root.show-preview;
+                        clicked => { root.toggle-preview(); }
                     }
                 }
             }
 
+            // ---- Hai khung: thanh đường dẫn đôi, hai danh sách thẳng hàng ----
+            if root.dual-pane: HorizontalLayout {
+                height: 32px;
+                pane-bar := Rectangle {
+                    horizontal-stretch: 1;
+                    changed width => { root.pane-area-width(self.width); }
+                    background: Theme.solid-base;
+
+                Rectangle {
+                    x: 0;
+                    y: parent.height - 1px;
+                    width: parent.width;
+                    height: 1px;
+                    background: Theme.stroke-divider;
+                }
+
+                HorizontalLayout {
+                    spacing: 0px;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: root.active-pane == "left" ? Theme.accent-subtle : transparent;
+                        TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            clicked => { root.pane-activated("left"); }
+                        }
+                        HorizontalLayout {
+                            padding-left: Theme.s3;
+                            padding-right: Theme.s2;
+                            spacing: Theme.s2;
+                            alignment: stretch;
+                            cross-axis-alignment: center;
+                            FluentIcon {
+                                name: "folder";
+                                width: 16px;
+                                height: 16px;
+                                tint: Theme.glyph-folder;
+                            }
+                            Text {
+                                text: root.left-path;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-caption;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            IconButton {
+                                width: 24px;
+                                height: 24px;
+                                icon: "arrow_up";
+                                accessible-text: "Lên một cấp ở khung trái";
+                                clicked => { root.pane-activated("left"); root.go-up(); }
+                            }
+                            IconButton {
+                                width: 24px;
+                                height: 24px;
+                                icon: "arrow_clockwise";
+                                accessible-text: "Làm mới khung trái";
+                                clicked => { root.pane-activated("left"); root.refresh(); }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 1px;
+                        height: parent.height;
+                        background: Theme.stroke-divider;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: root.active-pane == "right" ? Theme.accent-subtle : transparent;
+                        TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            clicked => { root.pane-activated("right"); }
+                        }
+                        HorizontalLayout {
+                            padding-left: Theme.s3;
+                            padding-right: Theme.s2;
+                            spacing: Theme.s2;
+                            alignment: stretch;
+                            cross-axis-alignment: center;
+                            FluentIcon {
+                                name: "folder";
+                                width: 16px;
+                                height: 16px;
+                                tint: Theme.glyph-folder;
+                            }
+                            Text {
+                                text: root.right-path;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-caption;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            IconButton {
+                                width: 24px;
+                                height: 24px;
+                                icon: "arrow_up";
+                                accessible-text: "Lên một cấp ở khung phải";
+                                clicked => { root.pane-activated("right"); root.go-up(); }
+                            }
+                            IconButton {
+                                width: 24px;
+                                height: 24px;
+                                icon: "arrow_clockwise";
+                                accessible-text: "Làm mới khung phải";
+                                clicked => { root.pane-activated("right"); root.refresh(); }
+                            }
+                        }
+                    }
+                }
+                }
+                if root.show-preview: Rectangle { width: Theme.preview-width; }
+            }
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+
             // ---- Vùng nội dung ----
             Rectangle {
                 horizontal-stretch: 1;
-                background: Theme.file-area;
+                min-width: root.dual-pane ? root.pane-half-width : 0px;
+                max-width: root.dual-pane ? root.pane-half-width : 100000px;
+                background: Theme.solid-base;
                 clip: true;
+                if root.dual-pane && root.active-pane == "left": Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: 2px;
+                    height: parent.height;
+                    background: Theme.accent;
+                }
+                init => {
+                    root.pane-geometry("left", self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+                }
+                changed absolute-position => {
+                    root.pane-geometry("left", self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+                }
+                changed height => {
+                    root.pane-geometry("left", self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+                }
+                // Số cột lưới phụ thuộc bề rộng thật, không phải hằng số 900.
+                changed width => {
+                    root.content-width = self.width;
+                    root.grid-width-changed(self.width);
+                    root.pane-geometry("left", self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+                }
 
                 if root.error-text != "": Rectangle {
-                    background: Theme.file-area;
+                    background: Theme.solid-base;
                     VerticalLayout {
                         alignment: center;
                         spacing: Theme.s3;
@@ -697,11 +961,11 @@ export component AppWindow inherits Window {
                     // TRƯỚC nội dung và định vị tuyệt đối: nếu để nó là con của
                     // VerticalLayout thì layout chia cho nó một nửa chiều cao.
                     TouchArea {
-                        clicked => { root.command("clear-selection"); }
-                        double-clicked => { root.go-up(); }
+                        clicked => { root.pane-activated("left"); root.command("clear-selection"); }
+                        double-clicked => { root.pane-activated("left"); root.go-up(); }
                         pointer-event(e) => {
-                            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
-                                root.background-context-menu(self.mouse-x, self.mouse-y);
+                            if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) {
+                                root.background-context-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                             }
                         }
                     }
@@ -710,71 +974,131 @@ export component AppWindow inherits Window {
                     // hàng tiêu đề cột (chỉ ở details view)
                     if root.view-mode == 0: Rectangle {
                         height: Theme.header-height;
-                        background: Theme.file-area;
+                        background: Theme.solid-base;
                         HorizontalLayout {
-                            // Bề rộng cột cố định: header và hàng dữ liệu dùng
-                            // cùng token nên không thể lệch, và tên dài chỉ bị
-                            // cắt chứ không đẩy cột khác.
-                            padding-left: Theme.s1 + Theme.list-pad;
-                            padding-right: Theme.s1 + Theme.list-pad;
+                            padding-left: Theme.list-pad;
+                            padding-right: Theme.list-pad;
                             spacing: 0px;
 
-                            Rectangle {
-                                width: Theme.col-name;
+                            for id in root.column-order: Rectangle {
+                                visible: root.col-visible(id, root.content-width);
+                                width: root.col-visible(id, root.content-width)
+                                    ? root.col-width(
+                                        id,
+                                        root.col-name-width,
+                                        root.col-tag-width,
+                                        root.col-modified-width,
+                                        root.col-kind-width,
+                                        root.col-size-width,
+                                    )
+                                    : 0px;
+                                background: hdr-ta.has-hover ? Theme.subtle-hover : transparent;
+                                animate background { duration: 80ms; }
+
                                 Text {
-                                    x: Theme.name-text-indent;
-                                    width: parent.width - Theme.name-text-indent;
-                                    text: "Tên" + (root.sort-column == "name" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
-                                    color: root.sort-column == "name" ? Theme.text-primary : Theme.text-secondary;
+                                    // Lề hai bên bằng nhau để tâm chữ trùng tâm cột,
+                                    // vẫn chừa chỗ cho vạch kéo ở mép phải.
+                                    x: root.col-resizable(id) ? 10px : 0px;
+                                    width: parent.width
+                                        - (root.col-resizable(id) ? 20px : 0px);
+                                    text: root.col-label(id)
+                                        + (root.sort-column == id && root.col-sortable(id)
+                                            ? (root.sort-desc ? "  ↓" : "  ↑")
+                                            : "");
+                                    color: root.sort-column == id && root.col-sortable(id)
+                                        ? Theme.text-primary
+                                        : Theme.text-secondary;
                                     font-size: Theme.font-caption;
                                     font-weight: Theme.weight-semibold;
+                                    horizontal-alignment: center;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
-                                TouchArea { clicked => { root.sort-by("name"); } }
-                            }
-                            Rectangle {
-                                width: Theme.col-modified;
-                                Text {
-                                    width: parent.width;
-                                    text: "Ngày sửa" + (root.sort-column == "modified" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
-                                    color: root.sort-column == "modified" ? Theme.text-primary : Theme.text-secondary;
-                                    font-size: Theme.font-caption;
-                                    font-weight: Theme.weight-semibold;
-                                    vertical-alignment: center;
-                                    overflow: elide;
+
+                                // Click để sort; kéo ngang để đổi thứ tự cột.
+                                hdr-ta := TouchArea {
+                                    x: 0;
+                                    y: 0;
+                                    width: parent.width - 10px;
+                                    height: parent.height;
+                                    mouse-cursor: pointer;
+                                    property <length> press-x: 0;
+                                    property <bool> dragging: false;
+                                    pointer-event(e) => {
+                                        let px = self.absolute-position.x + self.mouse-x;
+                                        if (e.kind == PointerEventKind.down) {
+                                            root.pane-activated("left");
+                                            self.press-x = px;
+                                            self.dragging = false;
+                                        }
+                                        if (e.kind == PointerEventKind.move) {
+                                            let dx = px - self.press-x;
+                                            if (dx > 24px || dx < -24px) {
+                                                self.dragging = true;
+                                            }
+                                        }
+                                        if (e.kind == PointerEventKind.up) {
+                                            if (self.dragging) {
+                                                root.column-moved(id, px > self.press-x ? 1 : -1);
+                                            } else if (root.col-sortable(id)) {
+                                                root.sort-by(id);
+                                            }
+                                            self.dragging = false;
+                                        }
+                                    }
                                 }
-                                TouchArea { clicked => { root.sort-by("modified"); } }
-                            }
-                            Rectangle {
-                                width: Theme.col-kind;
-                                Text {
-                                    width: parent.width;
-                                    text: "Loại" + (root.sort-column == "kind" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
-                                    color: root.sort-column == "kind" ? Theme.text-primary : Theme.text-secondary;
-                                    font-size: Theme.font-caption;
-                                    font-weight: Theme.weight-semibold;
-                                    vertical-alignment: center;
-                                    overflow: elide;
+
+                                // Điểm neo + vạch chia cột. Vạch luôn hiện để biết
+                                // giới hạn; hover/kéo đổi sang màu accent và rộng 2px.
+                                if root.col-resizable(id): Rectangle {
+                                    x: parent.width - 11px;
+                                    y: 0;
+                                    width: 11px;
+                                    height: parent.height;
+                                    background: resize-ta.has-hover || root.resizing-column == id
+                                        ? Theme.accent-subtle
+                                        : transparent;
+                                    Rectangle {
+                                        width: resize-ta.has-hover || root.resizing-column == id ? 2px : 1px;
+                                        height: parent.height;
+                                        x: parent.width - self.width;
+                                        y: 0;
+                                        background: resize-ta.has-hover || root.resizing-column == id
+                                            ? Theme.accent
+                                            : Theme.text-disabled;
+                                    }
+                                    resize-ta := TouchArea {
+                                        x: 0;
+                                        y: 0;
+                                        width: parent.width;
+                                        height: parent.height;
+                                        mouse-cursor: ew-resize;
+                                        property <length> start-x: 0;
+                                        property <length> start-width: 0;
+                                        pointer-event(e) => {
+                                            let px = self.absolute-position.x + self.mouse-x;
+                                            if (e.kind == PointerEventKind.down) {
+                                                root.pane-activated("left");
+                                                self.start-x = px;
+                                                self.start-width = root.current-col-width(id);
+                                                root.resizing-column = id;
+                                            }
+                                            if (e.kind == PointerEventKind.move) {
+                                                root.set-column-width(
+                                                    id,
+                                                    self.start-width + (px - self.start-x)
+                                                );
+                                            }
+                                            if (e.kind == PointerEventKind.up) {
+                                                root.column-resized(id, root.current-col-width(id));
+                                                root.resizing-column = "";
+                                            }
+                                            if (e.kind == PointerEventKind.cancel) {
+                                                root.resizing-column = "";
+                                            }
+                                        }
+                                    }
                                 }
-                                TouchArea { clicked => { root.sort-by("kind"); } }
-                            }
-                            // Ô trống cho cột trạng thái git, để tiêu đề và dữ
-                            // liệu thẳng cột.
-                            Rectangle { width: 16px; }
-                            Rectangle {
-                                width: Theme.col-size;
-                                Text {
-                                    width: parent.width;
-                                    text: "Kích thước" + (root.sort-column == "size" ? (root.sort-desc ? "  ↓" : "  ↑") : "");
-                                    color: root.sort-column == "size" ? Theme.text-primary : Theme.text-secondary;
-                                    font-size: Theme.font-caption;
-                                    font-weight: Theme.weight-semibold;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                                TouchArea { clicked => { root.sort-by("size"); } }
                             }
                             Rectangle { horizontal-stretch: 1; }
                         }
@@ -794,7 +1118,7 @@ export component AppWindow inherits Window {
 
                             // Trạng thái rỗng: một khung trắng không nói được gì,
                             // người dùng không biết thư mục trống hay app hỏng.
-                            if root.rows.length == 0 && !root.busy && root.error-text == "": Rectangle {
+                            if root.rows.length == 0 && !root.busy && root.error-text == "" && !(root.drag-active && root.drag-target == "left"): Rectangle {
                                 height: 160px;
                                 VerticalLayout {
                                     alignment: center;
@@ -835,11 +1159,21 @@ export component AppWindow inherits Window {
                                         padding-right: Theme.list-pad;
                                         spacing: 0px;
 
-                                        // Cột 1: icon + tên, bề rộng cố định.
-                                        HorizontalLayout {
-                                            width: Theme.col-name;
-                                            spacing: Theme.icon-gap;
-                                            HorizontalLayout {
+                                        for id in root.column-order: Rectangle {
+                                            visible: root.col-visible(id, root.content-width);
+                                            width: root.col-visible(id, root.content-width)
+                                                ? root.col-width(
+                                                    id,
+                                                    root.col-name-width,
+                                                    root.col-tag-width,
+                                                    root.col-modified-width,
+                                                    root.col-kind-width,
+                                                    root.col-size-width,
+                                                )
+                                                : 0px;
+
+                                            if id == "name": HorizontalLayout {
+                                                spacing: Theme.icon-gap;
                                                 // Icon: ảnh thật của Windows nếu có, ngược lại glyph Fluent.
                                                 if row.has-icon-image: Image {
                                                     source: row.icon-image;
@@ -856,68 +1190,101 @@ export component AppWindow inherits Window {
                                                     tint: row.glyph;
                                                 }
                                                 Text {
-                                                // width cố định + elide: tên dài bị cắt,
-                                                // không đẩy các cột sau.
-                                                // Trừ thẳng từ token cột, không hỏi parent.width:
-                                                // hỏi parent trong layout sẽ tạo binding loop.
-                                                width: Theme.col-name - Theme.icon-size - Theme.icon-gap;
-                                                text: row.name;
-                                                color: row.is-hidden ? Theme.text-tertiary : Theme.text-primary;
-                                                font-size: Theme.font-body;
-                                                vertical-alignment: center;
+                                                    // width cố định + elide: tên dài bị cắt,
+                                                    // không đẩy các cột sau.
+                                                    width: root.col-name-width - Theme.icon-size - Theme.icon-gap;
+                                                    text: row.name;
+                                                    color: row.is-hidden ? Theme.text-tertiary : Theme.text-primary;
+                                                    font-size: Theme.font-body;
+                                                    vertical-alignment: center;
                                                     overflow: elide;
                                                 }
                                             }
-                                        }
-                                        Text {
-                                            width: Theme.col-modified;
-                                            text: row.modified;
-                                            color: Theme.text-secondary;
-                                            font-size: Theme.font-caption;
-                                            vertical-alignment: center;
-                                            overflow: elide;
-                                        }
-                                        Text {
-                                            width: Theme.col-kind;
-                                            text: row.kind;
-                                            color: Theme.text-secondary;
-                                            font-size: Theme.font-caption;
-                                            vertical-alignment: center;
-                                            overflow: elide;
-                                        }
-                                        // Trạng thái git: một chữ cái, chỉ hiện khi
-                                        // thư mục là repo và tệp có thay đổi.
-                                        Rectangle {
-                                            width: 16px;
-                                            height: parent.height;
-                                            if row.git-letter != "": Text {
-                                                text: row.git-letter;
-                                                color: row.git-color;
-                                                font-size: Theme.font-caption;
-                                                font-weight: Theme.weight-semibold;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
+
+                                            if id == "tag": HorizontalLayout {
+                                                spacing: Theme.s2;
+                                                alignment: start;
+                                                if row.has-tag: Rectangle {
+                                                    width: 14px;
+                                                    FluentIcon {
+                                                        name: "tag";
+                                                        width: 14px;
+                                                        height: 14px;
+                                                        y: (parent.height - 14px) / 2;
+                                                        tint: row.tag-color;
+                                                    }
+                                                }
+                                                if row.has-tag: Text {
+                                                    width: root.col-tag-width - 14px - Theme.s2;
+                                                    text: row.tag-name;
+                                                    color: Theme.text-secondary;
+                                                    font-size: Theme.font-caption;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
                                             }
-                                        }
-                                        Text {
-                                            width: Theme.col-size;
-                                            text: row.size;
-                                            color: Theme.text-secondary;
-                                            font-size: Theme.font-caption;
-                                            horizontal-alignment: right;
-                                            vertical-alignment: center;
-                                            overflow: elide;
+
+                                            if id == "modified": Text {
+                                                width: parent.width;
+                                                text: row.modified;
+                                                color: Theme.text-secondary;
+                                                font-size: Theme.font-caption;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+
+                                            if id == "kind": Text {
+                                                width: parent.width;
+                                                text: row.kind;
+                                                color: Theme.text-secondary;
+                                                font-size: Theme.font-caption;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+
+                                            // Trạng thái git: một chữ cái, chỉ hiện khi
+                                            // thư mục là repo và tệp có thay đổi.
+                                            if id == "git": Rectangle {
+                                                width: parent.width;
+                                                if row.git-letter != "": Text {
+                                                    width: parent.width;
+                                                    text: row.git-letter;
+                                                    color: row.git-color;
+                                                    font-size: Theme.font-caption;
+                                                    font-weight: Theme.weight-semibold;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+
+                                            if id == "size": Text {
+                                                width: parent.width;
+                                                text: row.size;
+                                                color: Theme.text-secondary;
+                                                font-size: Theme.font-caption;
+                                                horizontal-alignment: right;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
                                         }
                                         Rectangle { horizontal-stretch: 1; }
                                     }
                                     rta := TouchArea {
                                         clicked => { }
                                         double-clicked => { root.open-row(i); }
+                                        mouse-cursor: root.drag-active
+                                            ? (root.drag-target == "" ? no-drop : (root.drag-copy ? copy : move))
+                                            : pointer;
+                                        property <length> drag-press-x: 0;
+                                        property <length> drag-press-y: 0;
+                                        property <bool> drag-armed: false;
                                         pointer-event(e) => {
+                                            let ax = self.absolute-position.x + self.mouse-x;
+                                            let ay = self.absolute-position.y + self.mouse-y;
                                             if (e.kind == PointerEventKind.down) {
                                                 if (e.button == PointerEventButton.right) {
+                                                    self.drag-armed = false;
                                                     root.select-row(i, 0);
-                                                    root.row-context-menu(i, self.mouse-x, self.mouse-y);
                                                 } else if (e.button == PointerEventButton.left) {
                                                     // Chuyển modifier xuống Rust: Ctrl = thêm/bớt
                                                     // một mục, Shift = chọn cả khoảng.
@@ -925,7 +1292,35 @@ export component AppWindow inherits Window {
                                                         i,
                                                         e.modifiers.control ? 2 : (e.modifiers.shift ? 1 : 0)
                                                     );
+                                                    self.drag-press-x = self.mouse-x;
+                                                    self.drag-press-y = self.mouse-y;
+                                                    self.drag-armed = true;
                                                 }
+                                            }
+                                            if (e.kind == PointerEventKind.move && self.drag-armed) {
+                                                if (abs(self.mouse-x - self.drag-press-x) > 8px
+                                                    || abs(self.mouse-y - self.drag-press-y) > 8px) {
+                                                    self.drag-armed = false;
+                                                    root.drag-start("left", i, ax, ay, e.modifiers.control);
+                                                }
+                                            }
+                                            if (e.kind == PointerEventKind.move && root.drag-active) {
+                                                root.drag-move(ax, ay, e.modifiers.control);
+                                            }
+                                            if (e.kind == PointerEventKind.up) {
+                                                self.drag-armed = false;
+                                                if (root.drag-active) {
+                                                    root.drag-drop(ax, ay, e.modifiers.control);
+                                                }
+                                            }
+                                            if (e.kind == PointerEventKind.cancel) {
+                                                self.drag-armed = false;
+                                                if (root.drag-active) { root.drag-cancel(); }
+                                            }
+                                            // Menu mở lúc nhả chuột: mở lúc nhấn thì chính cú nhả
+                                            // có thể rơi vào lớp nền của menu và đóng nó ngay.
+                                            if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) {
+                                                root.row-context-menu(i, ax, ay);
                                             }
                                         }
                                     }
@@ -968,17 +1363,51 @@ export component AppWindow inherits Window {
                                         gta := TouchArea {
                                             clicked => { }
                                             double-clicked => { root.open-row(row.index); }
+                                            mouse-cursor: root.drag-active
+                                                ? (root.drag-target == "" ? no-drop : (root.drag-copy ? copy : move))
+                                                : pointer;
+                                            property <length> drag-press-x: 0;
+                                            property <length> drag-press-y: 0;
+                                            property <bool> drag-armed: false;
                                             pointer-event(e) => {
+                                                let ax = self.absolute-position.x + self.mouse-x;
+                                                let ay = self.absolute-position.y + self.mouse-y;
                                                 if (e.kind == PointerEventKind.down) {
                                                     if (e.button == PointerEventButton.right) {
+                                                        self.drag-armed = false;
                                                         root.select-row(row.index, 0);
-                                                        root.row-context-menu(row.index, self.mouse-x, self.mouse-y);
                                                     } else if (e.button == PointerEventButton.left) {
                                                         root.select-row(
                                                             row.index,
                                                             e.modifiers.control ? 2 : (e.modifiers.shift ? 1 : 0)
                                                         );
+                                                        self.drag-press-x = self.mouse-x;
+                                                        self.drag-press-y = self.mouse-y;
+                                                        self.drag-armed = true;
                                                     }
+                                                }
+                                                if (e.kind == PointerEventKind.move && self.drag-armed) {
+                                                    if (abs(self.mouse-x - self.drag-press-x) > 8px
+                                                        || abs(self.mouse-y - self.drag-press-y) > 8px) {
+                                                        self.drag-armed = false;
+                                                        root.drag-start("left", row.index, ax, ay, e.modifiers.control);
+                                                    }
+                                                }
+                                                if (e.kind == PointerEventKind.move && root.drag-active) {
+                                                    root.drag-move(ax, ay, e.modifiers.control);
+                                                }
+                                                if (e.kind == PointerEventKind.up) {
+                                                    self.drag-armed = false;
+                                                    if (root.drag-active) {
+                                                        root.drag-drop(ax, ay, e.modifiers.control);
+                                                    }
+                                                }
+                                                if (e.kind == PointerEventKind.cancel) {
+                                                    self.drag-armed = false;
+                                                    if (root.drag-active) { root.drag-cancel(); }
+                                                }
+                                                if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) {
+                                                    root.row-context-menu(row.index, ax, ay);
                                                 }
                                             }
                                         }
@@ -991,12 +1420,101 @@ export component AppWindow inherits Window {
                     // vùng trống: chuột phải ra menu nền, double-click lên một cấp
                 }
                 }
+                // Tooltip đường dẫn đầy đủ khi rê chuột lên breadcrumb. Khai
+                // báo CUỐI vùng nội dung để vẽ đè lên danh sách bên dưới.
+                if root.crumb-hovered && !root.editing-address: Rectangle {
+                    x: Theme.s3;
+                    y: Theme.s2;
+                    width: min(parent.width - Theme.s6, 760px);
+                    height: 44px;
+                    border-radius: Theme.r-md;
+                    background: Theme.solid-tertiary;
+                    border-width: 1px;
+                    border-color: Theme.stroke-strong;
+                    drop-shadow-blur: 16px;
+                    drop-shadow-color: #00000033;
+                    Text {
+                        x: Theme.s3;
+                        y: Theme.s2;
+                        width: parent.width - Theme.s6;
+                        height: parent.height - Theme.s4;
+                        text: root.address-text;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-caption;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.drag-active && root.drag-target == "left": Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    border-width: 2px;
+                    border-color: Theme.accent;
+                    background: Theme.accent-subtle;
+                    Text {
+                        text: root.drag-copy ? "Sao chép vào thư mục này" : "Di chuyển vào thư mục này";
+                        color: Theme.accent;
+                        font-size: Theme.font-body;
+                        font-weight: Theme.weight-semibold;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if root.dual-pane: Rectangle {
+                width: 1px;
+                vertical-stretch: 1;
+                background: Theme.stroke-divider;
+            }
+
+            // ---- Khung phải ----
+            if root.dual-pane: SecondaryPane {
+                horizontal-stretch: 1;
+                min-width: root.pane-half-width;
+                max-width: root.pane-half-width;
+                rows: root.right-rows;
+                grid-rows: root.right-grid-rows;
+                grid-view: root.view-mode == 1;
+                error-text: root.right-error-text;
+                busy: root.right-loading;
+                active: root.active-pane == "right";
+                drop-target: root.drag-target == "right";
+                dragging: root.drag-active;
+                drag-copy: root.drag-copy;
+                drag-valid: root.drag-target != "";
+                sort-column: root.right-sort-column;
+                sort-desc: root.right-sort-desc;
+                activated => { root.pane-activated("right"); }
+                background-clicked => { root.pane-activated("right"); root.command("clear-selection"); }
+                open-row(i) => { root.right-open-row(i); }
+                select-row(i, mode) => { root.right-select-row(i, mode); }
+                row-context-menu(i, x, y) => { root.right-row-context-menu(i, x, y); }
+                background-context-menu(x, y) => { root.right-background-context-menu(x, y); }
+                sort-by(id) => { root.right-sort-by(id); }
+                grid-width-changed(w) => { root.right-grid-width-changed(w); }
+                drag-start(index, x, y, copy) => { root.drag-start("right", index, x, y, copy); }
+                drag-move(x, y, copy) => { root.drag-move(x, y, copy); }
+                drag-drop(x, y, copy) => { root.drag-drop(x, y, copy); }
+                drag-cancel => { root.drag-cancel(); }
+                rect-changed(x, y, w, h) => { root.pane-geometry("right", x, y, w, h); }
             }
 
             // ---- Preview pane ----
             if root.show-preview: Rectangle {
                 width: Theme.preview-width;
-                background: Theme.solid-secondary;
+                background: Theme.solid-base;
+
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.stroke-divider;
+                }
                 VerticalLayout {
                     padding: Theme.s4;
                     spacing: Theme.s2;
@@ -1077,14 +1595,22 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+                }
+            }
         }
 
         // ================= STATUS BAR =================
         Rectangle {
             height: Theme.status-height;
-            background: Theme.solid-secondary;
-            border-width: 1px;
-            border-color: Theme.stroke-divider;
+            background: Theme.solid-base;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.stroke-divider;
+            }
 
             HorizontalLayout {
                 padding-left: Theme.s3;
@@ -1113,7 +1639,7 @@ export component AppWindow inherits Window {
                     overflow: elide;
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if root.busy: HorizontalLayout {
+                if root.busy && !(root.operation-running && root.operation-visible): HorizontalLayout {
                     spacing: Theme.s2;
                     // Thanh tiến trình: chỉ hiện khi biết tỉ lệ thật, để không
                     // vẽ một thanh đứng yên trông như app treo.
@@ -1160,6 +1686,13 @@ export component AppWindow inherits Window {
                     font-size: Theme.font-caption;
                     vertical-alignment: center;
                 }
+                if root.status-message != "": Text {
+                    text: root.status-message;
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-caption;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
                 // Đặt app làm trình duyệt tệp mặc định. Cần người dùng xác
                 // nhận: hành động này đổi thứ Windows dùng cho mọi thao tác mở
                 // thư mục sau này, và Windows vẫn hỏi lại lần nữa ở Settings.
@@ -1199,6 +1732,247 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ================= VIỀN KÉO RESIZE =================
+    // Cửa sổ no-frame: 8 vùng mảnh ở biên, kéo bằng winit để resize 2 chiều.
+    TouchArea {
+        x: 0; y: 0; width: parent.width; height: 4px;
+        mouse-cursor: n-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("n"); }
+        }
+    }
+    TouchArea {
+        x: 0; y: parent.height - 4px; width: parent.width; height: 4px;
+        mouse-cursor: s-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("s"); }
+        }
+    }
+    TouchArea {
+        x: 0; y: 0; width: 4px; height: parent.height;
+        mouse-cursor: w-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("w"); }
+        }
+    }
+    TouchArea {
+        x: parent.width - 4px; y: 0; width: 4px; height: parent.height;
+        mouse-cursor: e-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("e"); }
+        }
+    }
+    TouchArea {
+        x: 0; y: 0; width: 8px; height: 8px;
+        mouse-cursor: nw-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("nw"); }
+        }
+    }
+    TouchArea {
+        x: parent.width - 8px; y: 0; width: 8px; height: 8px;
+        mouse-cursor: ne-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("ne"); }
+        }
+    }
+    TouchArea {
+        x: 0; y: parent.height - 8px; width: 8px; height: 8px;
+        mouse-cursor: sw-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("sw"); }
+        }
+    }
+    TouchArea {
+        x: parent.width - 8px; y: parent.height - 8px; width: 8px; height: 8px;
+        mouse-cursor: se-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.window-resize("se"); }
+        }
+    }
+
+    // ================= THẺ TIẾN TRÌNH =================
+    // Flyout nhỏ ở góc phải trên thanh trạng thái. Chỉ hiện sau khi thao tác
+    // đã chạy đủ lâu; thao tác tức thời không làm popup nhấp nháy.
+    if root.operation-visible: Rectangle {
+        x: max(8px, root.width - self.width - 16px);
+        y: max(8px, root.height - self.height - Theme.status-height - 12px);
+        width: min(360px, root.width - 16px);
+        height: 112px;
+        border-radius: Theme.r-lg;
+        background: Theme.solid-tertiary;
+        border-width: 1px;
+        border-color: Theme.stroke-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000040;
+        drop-shadow-offset-y: 6px;
+
+        // Chặn click xuyên xuống danh sách phía sau.
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+        }
+
+        VerticalLayout {
+            padding: Theme.s4;
+            spacing: Theme.s2;
+
+            HorizontalLayout {
+                spacing: Theme.s3;
+                alignment: stretch;
+                cross-axis-alignment: center;
+
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 16px;
+                    background: root.operation-tone == 1 ? Theme.success
+                        : root.operation-tone == 2 ? Theme.critical
+                        : Theme.accent-subtle;
+                    FluentIcon {
+                        name: root.operation-tone == 1 ? "checkmark"
+                            : root.operation-tone == 2 ? "warning"
+                            : "arrow_sync";
+                        width: 16px;
+                        height: 16px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        tint: root.operation-tone == 0 ? Theme.accent : Theme.text-on-accent;
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text {
+                        text: root.operation-title;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-body;
+                        font-weight: Theme.weight-semibold;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.operation-tone == 1
+                            ? ("Hoàn tất sau " + root.operation-seconds + " giây")
+                            : root.operation-tone == 2
+                                ? ("Dừng sau " + root.operation-seconds + " giây")
+                                : root.operation-total > 0
+                                    ? (root.operation-done + "/" + root.operation-total + " mục · " + root.operation-seconds + " giây")
+                                    : ("Đang xử lý · " + root.operation-seconds + " giây");
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                if root.operation-tone == 0 && root.cancellable: Rectangle {
+                    width: 52px;
+                    height: 24px;
+                    border-radius: Theme.r-sm;
+                    background: op-cancel-ta.has-hover ? Theme.subtle-pressed : Theme.subtle-hover;
+                    Text {
+                        text: "Huỷ";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-caption;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    op-cancel-ta := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { root.cancel-operation(); }
+                    }
+                }
+
+                if root.operation-tone != 0: Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: Theme.r-sm;
+                    background: op-close-ta.has-hover ? Theme.subtle-hover : transparent;
+                    FluentIcon {
+                        name: "dismiss";
+                        width: 12px;
+                        height: 12px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        tint: Theme.text-secondary;
+                    }
+                    op-close-ta := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { root.dismiss-operation(); }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 4px;
+                border-radius: 2px;
+                background: Theme.stroke-divider;
+
+                if root.operation-tone == 0 && root.operation-total > 0: Rectangle {
+                    width: parent.width * root.progress;
+                    height: parent.height;
+                    border-radius: 2px;
+                    background: Theme.accent;
+                }
+                if root.operation-tone == 0 && root.operation-total == 0: Rectangle {
+                    width: 96px;
+                    height: parent.height;
+                    border-radius: 2px;
+                    background: Theme.accent;
+                    x: (parent.width - self.width) * root.operation-phase;
+                    animate x { duration: 120ms; }
+                }
+                if root.operation-tone != 0: Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    border-radius: 2px;
+                    background: root.operation-tone == 1 ? Theme.success : Theme.critical;
+                }
+            }
+        }
+    }
+
+    // ================= GHOST KÉO-THẢ =================
+    if root.drag-active && !root.drag-external: Rectangle {
+        x: max(8px, min(root.drag-x + 16px, root.width - self.width - 8px));
+        y: max(8px, min(root.drag-y + 12px, root.height - self.height - 8px));
+        width: 220px;
+        height: 34px;
+        border-radius: Theme.r-md;
+        background: Theme.solid-tertiary;
+        border-width: 1px;
+        border-color: Theme.stroke-strong;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000033;
+        drop-shadow-offset-y: 4px;
+
+        HorizontalLayout {
+            padding-left: Theme.s2;
+            padding-right: Theme.s3;
+            spacing: Theme.s2;
+            alignment: start;
+            cross-axis-alignment: center;
+            FluentIcon {
+                name: root.drag-copy ? "copy" : "cut";
+                width: 15px;
+                height: 15px;
+                tint: root.drag-target == "" ? Theme.text-disabled : Theme.accent;
+            }
+            Text {
+                text: (root.drag-copy ? "Sao chép " : "Di chuyển ") + root.drag-count + " mục";
+                color: Theme.text-primary;
+                font-size: Theme.font-caption;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+
     // ================= COMMAND PALETTE =================
     // Hộp nổi ở giữa trên cùng, gõ để lọc lệnh — giống Files và VS Code.
     if root.palette-open: Rectangle {
@@ -1207,7 +1981,7 @@ export component AppWindow inherits Window {
         width: parent.width;
         height: parent.height;
         background: #00000040;
-        TouchArea { clicked => { root.close-palette(); } }
+        TouchArea { clicked => { key-root.focus(); root.close-palette(); } }
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -1234,8 +2008,15 @@ export component AppWindow inherits Window {
                         font-size: Theme.font-subtitle;
                         text: root.palette-query;
                         edited => { root.palette-changed(self.text); }
+                        key-pressed(event) => {
+                            if (event.text == Key.Escape) {
+                                key-root.focus(); root.close-palette(); return accept;
+                            }
+                            reject
+                        }
                         accepted => {
                             if (root.palette-items.length > 0) {
+                                key-root.focus();
                                 root.palette-accepted(root.palette-items[0].id);
                             }
                         }
@@ -1282,7 +2063,7 @@ export component AppWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                             }
-                            pi := TouchArea { clicked => { root.palette-accepted(item.id); } }
+                            pi := TouchArea { clicked => { key-root.focus(); root.palette-accepted(item.id); } }
                         }
                         if root.palette-items.length == 0: Rectangle {
                             height: 60px;
@@ -1307,12 +2088,32 @@ export component AppWindow inherits Window {
         width: parent.width;
         height: parent.height;
         background: transparent;
-        TouchArea { clicked => { root.dismiss-menu(); } }
-        MenuPopup {
-            x: min(root.menu-x, root.width - 240px);
-            y: min(root.menu-y, root.height - 300px);
+        TouchArea { clicked => { key-root.focus(); root.dismiss-menu(); } }
+        main-menu := MenuPopup {
+            // Kẹp trong cửa sổ; menu dài sẽ cuộn thay vì tràn đáy.
+            x: max(4px, min(root.menu-x, root.width - self.width - 4px));
+            y: max(4px, min(root.menu-y, root.height - self.height - 4px));
             items: root.menu-items;
-            activated(id) => { root.menu-activated(id); }
+            activated(id) => {
+                if (id == "open-with-menu") {
+                    // Giữ menu chính mở, mở danh sách ứng dụng bên cạnh.
+                    root.open-with-open = true;
+                } else {
+                    key-root.focus();
+                    root.open-with-open = false;
+                    root.menu-activated(id);
+                }
+            }
+        }
+        if root.open-with-open: MenuPopup {
+            items: root.open-with-items;
+            // Ưu tiên bên phải menu chính; hết chỗ thì lật sang trái.
+            x: main-menu.x + main-menu.width + 2px + self.width <= root.width - 4px
+                ? main-menu.x + main-menu.width + 2px
+                : max(4px, main-menu.x - self.width - 2px);
+            // "Mở bằng" là mục thứ ba của menu chính (sau "Mở" và "Mở trong tab mới").
+            y: max(4px, min(main-menu.y + Theme.s1 + 60px, root.height - self.height - 4px));
+            activated(id) => { key-root.focus(); root.open-with-activated(id); }
         }
     }
 
@@ -1323,7 +2124,7 @@ export component AppWindow inherits Window {
         width: parent.width;
         height: parent.height;
         background: #00000066;
-        TouchArea { clicked => { root.dialog-cancel(); } }
+        TouchArea { clicked => { key-root.focus(); root.dialog-cancel(); } }
 
         DialogSurface {
             x: (parent.width - self.width) / 2;
@@ -1336,9 +2137,9 @@ export component AppWindow inherits Window {
             primary-enabled: !root.dialog-has-input
                 || root.dialog-value != ""
                 || root.dialog-allows-empty;
-            primary => { root.dialog-confirm(root.dialog-value); }
-            secondary => { root.dialog-secondary(); }
-            cancelled => { root.dialog-cancel(); }
+            primary => { key-root.focus(); root.dialog-confirm(root.dialog-value); }
+            secondary => { key-root.focus(); root.dialog-secondary(); }
+            cancelled => { key-root.focus(); root.dialog-cancel(); }
 
             if root.dialog-kind == "confirm-delete" || root.dialog-kind == "confirm-delete-permanent" || root.dialog-kind == "confirm-default" || root.dialog-kind == "paste-conflict" || root.dialog-kind == "confirm-rotate" || root.dialog-kind == "confirm-empty-bin": Text {
                 text: root.dialog-text;
@@ -1368,7 +2169,13 @@ export component AppWindow inherits Window {
                         // binding một chiều cộng `edited` gán ngược lại, nên
                         // giá trị không tới được Rust và nút "Tạo" đứng im.
                         text <=> root.dialog-value;
-                        accepted => { root.dialog-confirm(self.text); }
+                        accepted => { key-root.focus(); root.dialog-confirm(self.text); }
+                        key-pressed(event) => {
+                            if (event.text == Key.Escape) {
+                                key-root.focus(); root.dialog-cancel(); return accept;
+                            }
+                            reject
+                        }
                         // Focus ngay khi hộp thoại mở, nếu không người dùng gõ
                         // mà không có gì xảy ra.
                         init => { self.focus(); }
@@ -1381,5 +2188,103 @@ export component AppWindow inherits Window {
     public function end-edit-address() {
         root.editing-address = false;
         key-root.focus();
+    }
+
+    // ---- Cột động ----
+
+    pure public function col-width(
+        id: string,
+        name-width: length,
+        tag-width: length,
+        modified-width: length,
+        kind-width: length,
+        size-width: length,
+    ) -> length {
+        id == "name" ? name-width
+        : id == "tag" ? tag-width
+        : id == "modified" ? modified-width
+        : id == "kind" ? kind-width
+        : id == "size" ? size-width
+        : 16px
+    }
+
+    /// Bề rộng hiện tại; chỉ dùng trong event handler (không dùng trong binding).
+    public function current-col-width(id: string) -> length {
+        root.col-width(
+            id,
+            root.col-name-width,
+            root.col-tag-width,
+            root.col-modified-width,
+            root.col-kind-width,
+            root.col-size-width,
+        )
+    }
+
+    pure public function col-label(id: string) -> string {
+        id == "name" ? "Tên"
+        : id == "tag" ? "Thẻ"
+        : id == "modified" ? "Ngày sửa"
+        : id == "kind" ? "Loại"
+        : id == "size" ? "Kích thước"
+        : ""
+    }
+
+    pure public function col-min(id: string) -> length {
+        id == "name" ? 120px
+        : id == "tag" ? 70px
+        : id == "modified" ? 100px
+        : id == "kind" ? 70px
+        : id == "size" ? 70px
+        : 16px
+    }
+
+    pure public function col-max(id: string) -> length {
+        id == "name" ? 600px
+        : id == "tag" ? 220px
+        : id == "modified" ? 240px
+        : id == "kind" ? 200px
+        : id == "size" ? 200px
+        : 16px
+    }
+
+    pure public function col-resizable(id: string) -> bool {
+        id != "git"
+    }
+
+    pure public function col-sortable(id: string) -> bool {
+        id == "name" || id == "modified" || id == "kind" || id == "size"
+    }
+
+    pure public function col-visible(id: string, content: length) -> bool {
+        id == "tag" ? content > 560px
+        : id == "kind" || id == "size" || id == "git" ? content > 760px
+        : true
+    }
+
+    public function set-column-width(id: string, width: length) {
+        let min = root.col-min(id);
+        let max = root.col-max(id);
+        // Tổng bề rộng các cột đang hiện; giữ cột cuối không bị đẩy ra ngoài
+        // vùng nhìn. Muốn rộng hơn thì thu nhỏ cột khác hoặc phóng to cửa sổ.
+        let total =
+            (root.col-visible("name", root.content-width) ? root.col-name-width : 0px)
+            + (root.col-visible("tag", root.content-width) ? root.col-tag-width : 0px)
+            + (root.col-visible("modified", root.content-width) ? root.col-modified-width : 0px)
+            + (root.col-visible("kind", root.content-width) ? root.col-kind-width : 0px)
+            + (root.col-visible("git", root.content-width) ? 16px : 0px)
+            + (root.col-visible("size", root.content-width) ? root.col-size-width : 0px);
+        let others = total - root.current-col-width(id);
+        let available = root.content-width
+            - Theme.list-pad
+            - Theme.list-pad
+            - 16px
+            - others;
+        let upper = max < available ? max : available;
+        let w = width < min ? min : (width > upper ? upper : width);
+        if (id == "name") { root.col-name-width = w; }
+        if (id == "tag") { root.col-tag-width = w; }
+        if (id == "modified") { root.col-modified-width = w; }
+        if (id == "kind") { root.col-kind-width = w; }
+        if (id == "size") { root.col-size-width = w; }
     }
 }

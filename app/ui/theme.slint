@@ -15,6 +15,9 @@ export global Theme {
     out property <color> layer: dark ? #ffffff14 : #ffffff80;
     out property <color> card: dark ? #ffffff0d : #ffffffb3;
     out property <color> card-secondary: dark ? #ffffff08 : #f6f6f680;
+    // Tab đang chọn: Files dùng một khối sáng hơn nền title bar, không phải
+    // translucent card (trông quá mờ trên nền tối).
+    out property <color> tab-active: dark ? #2d2d2d : #ffffff;
 
     // Vùng nội dung file: sáng hơn panel một chút để tách lớp.
     out property <color> file-area: dark ? #272727 : #fbfbfb;
@@ -84,12 +87,13 @@ export global Theme {
     out property <length> commandbar-height: 48px;
     out property <length> addressbar-height: 34px;
     out property <length> header-height: 32px;
-    out property <length> row-height: 36px;
+    out property <length> row-height: 38px;
     out property <length> grid-tile: 132px;
     out property <length> status-height: 28px;
     out property <length> sidebar-width: 240px;
     out property <length> sidebar-collapsed: 0px;
-    out property <length> preview-width: 300px;
+    // Hai panel hai bên cùng bề rộng để bố cục cân; nội dung ở giữa co giãn.
+    out property <length> preview-width: 240px;
     out property <length> control-height: 32px;
 
     // ---- Cột bảng tệp ----
@@ -97,16 +101,17 @@ export global Theme {
     // này, nên cột không thể lệch nhau và một cái tên dài không thể đẩy cột.
     out property <length> list-pad: 12px;        // lề trong của cả header và hàng
     out property <length> icon-size: 20px;       // icon loại tệp ở cột đầu
-    out property <length> icon-gap: 10px;        // icon → chữ
-    out property <length> col-name: 280px;       // tên: quá dài thì elide
-    out property <length> col-modified: 150px;   // ngày sửa
-    out property <length> col-kind: 120px;       // loại
-    out property <length> col-size: 110px;       // kích thước (căn phải)
+    out property <length> icon-gap: 12px;        // icon → chữ
+    out property <length> col-name: 240px;       // tên: quá dài thì elide
+    out property <length> col-tag: 100px;        // thẻ màu
+    out property <length> col-modified: 140px;   // ngày sửa
+    out property <length> col-kind: 100px;       // loại
+    out property <length> col-size: 90px;        // kích thước (căn phải)
     // Header "Tên" thụt vào đúng chỗ chữ của tên tệp: bỏ qua icon + khoảng cách.
     // Header và hàng dữ liệu đều bắt đầu ở `list-pad`. Trong hàng, chữ tên
     // nằm sau icon + khoảng cách, nên header phải thụt đúng chừng đó để thẳng
-    // cột: icon-size + icon-gap = 20 + 10.
-    out property <length> name-text-indent: 19px;
+    // cột: icon-size + icon-gap = 20 + 12.
+    out property <length> name-text-indent: 32px;
 
     // ---- Chữ ----
     out property <length> font-caption: 12px;

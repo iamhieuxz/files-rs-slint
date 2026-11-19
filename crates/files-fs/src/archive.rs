@@ -37,10 +37,7 @@ impl HashKind {
 pub fn hash_file(path: &Path, kind: HashKind) -> Result<String, FsError> {
     let meta = std::fs::metadata(path).map_err(FsError::from)?;
     if meta.is_dir() {
-        return Err(FsError::new(
-            "not_a_file",
-            "Chỉ tính được mã băm cho tệp",
-        ));
+        return Err(FsError::new("not_a_file", "Chỉ tính được mã băm cho tệp"));
     }
 
     let file = File::open(path).map_err(FsError::from)?;
@@ -129,6 +126,15 @@ pub fn archive_name(sources: &[PathBuf]) -> String {
 /// Directory trees are stored with their relative paths so extraction recreates
 /// the structure instead of dumping every file into one folder.
 pub fn create_zip(sources: &[PathBuf], dest: &Path) -> Result<usize, FsError> {
+    // `File::create` truncates, so overwriting here destroys data before any
+    // error can be reported. This also catches zipping a file onto itself:
+    // the destination is then one of the sources and already exists.
+    if dest.exists() {
+        return Err(FsError::new(
+            "exists",
+            format!("Đã tồn tại: {}", dest.display()),
+        ));
+    }
     let file = File::create(dest).map_err(FsError::from)?;
     let mut zip = zip::ZipWriter::new(file);
     let options: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
@@ -193,20 +199,27 @@ fn zip_name(rel: &Path) -> String {
 /// archive cannot write outside the target folder.
 pub fn extract_zip(archive: &Path, target_dir: &Path) -> Result<usize, FsError> {
     let file = File::open(archive).map_err(FsError::from)?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| {
-        FsError::new("invalid_archive", format!("Không đọc được tệp nén: {e}"))
-    })?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| FsError::new("invalid_archive", format!("Không đọc được tệp nén: {e}")))?;
 
     std::fs::create_dir_all(target_dir).map_err(FsError::from)?;
     let mut count = 0usize;
 
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| {
-            FsError::new("invalid_archive", format!("Mục {i} hỏng: {e}"))
-        })?;
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| FsError::new("invalid_archive", format!("Mục {i} hỏng: {e}")))?;
 
-        // `enclosed_name` rejects `..` and absolute paths, which is the whole
-        // defence against a zip-slip archive.
+        // `enclosed_name` chặn `..`; kiểm tra thêm dấu tuyệt đối vì một số
+        // archive ghi `/file` hoặc `C:ile` và thư viện có thể chuẩn hoá nó
+        // thành đường dẫn tương đối.
+        let raw_name = entry.name();
+        if raw_name.starts_with('/')
+            || raw_name.starts_with('\\')
+            || raw_name.as_bytes().get(1) == Some(&b':')
+        {
+            continue;
+        }
         let Some(rel) = entry.enclosed_name() else {
             continue;
         };

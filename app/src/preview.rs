@@ -115,7 +115,11 @@ pub fn show(ui: &AppWindow, entry: &Entry) {
         return;
     }
 
-    let ext = entry.extension.as_deref().unwrap_or("").to_ascii_lowercase();
+    let ext = entry
+        .extension
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let path = Path::new(&entry.path);
 
     if IMAGE_EXTS.contains(&ext.as_str()) {
@@ -164,7 +168,10 @@ mod tests {
         let rows = properties(&file_entry());
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
         assert!(labels.contains(&"Kích thước"));
-        assert!(!labels.contains(&"Số mục"), "only folders have an item count");
+        assert!(
+            !labels.contains(&"Số mục"),
+            "only folders have an item count"
+        );
         let size = rows.iter().find(|r| r.label == "Kích thước").unwrap();
         assert_eq!(size.value.as_str(), "2.0 KB");
     }
@@ -192,8 +199,22 @@ mod tests {
         e.modified_ms = None;
         e.created_ms = None;
         let rows = properties(&e);
-        assert_eq!(rows.iter().find(|r| r.label == "Sửa lần cuối").unwrap().value.as_str(), "");
-        assert_eq!(rows.iter().find(|r| r.label == "Tạo lúc").unwrap().value.as_str(), "");
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.label == "Sửa lần cuối")
+                .unwrap()
+                .value
+                .as_str(),
+            ""
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.label == "Tạo lúc")
+                .unwrap()
+                .value
+                .as_str(),
+            ""
+        );
     }
 
     #[test]
@@ -211,7 +232,11 @@ mod tests {
         };
         let rows = properties(&e);
         let size = rows.iter().find(|r| r.label == "Kích thước").unwrap();
-        assert_eq!(size.value.as_str(), "—", "unknown is shown as a dash, not 0 B");
+        assert_eq!(
+            size.value.as_str(),
+            "—",
+            "unknown is shown as a dash, not 0 B"
+        );
         assert!(rows.iter().any(|r| r.label == "Số mục"));
     }
 }
