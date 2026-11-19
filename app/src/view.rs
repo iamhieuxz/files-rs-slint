@@ -274,6 +274,73 @@ pub fn grouped_rows(
     (order, headers)
 }
 
+/// Tự vừa **một** cột theo nội dung. Dùng cho bấm đúp vạch chia cột.
+///
+/// Khác `autofit_columns` ở chỗ chỉ đụng một cột, nên người dùng giữ được bề
+/// rộng đã chỉnh tay cho các cột còn lại.
+pub fn autofit_column(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
+    use crate::settings::column_bounds;
+    use files_core::autofit::fit_width;
+
+    let (width, order) = {
+        let s = app.borrow();
+        let tab = s.tab();
+        let texts: Vec<String> = match id {
+            "name" => tab
+                .visible
+                .iter()
+                .filter_map(|i| tab.entries.get(*i))
+                .map(|e| crate::format::display_name(&e.name, e.is_dir(), s.show_extensions))
+                .collect(),
+            "kind" => tab
+                .visible
+                .iter()
+                .filter_map(|i| tab.entries.get(*i))
+                .map(crate::format::kind_label)
+                .collect(),
+            "size" => tab
+                .visible
+                .iter()
+                .filter_map(|i| tab.entries.get(*i))
+                .map(|e| crate::format::format_size(e.size))
+                .collect(),
+            "modified" => tab
+                .visible
+                .iter()
+                .filter_map(|i| tab.entries.get(*i))
+                .map(|e| crate::format::format_time(e.modified_ms))
+                .collect(),
+            "tag" => tab
+                .visible
+                .iter()
+                .filter_map(|i| tab.entries.get(*i))
+                .map(|e| {
+                    s.tags
+                        .tags_for(Path::new(&e.path))
+                        .first()
+                        .map(|t| t.name.clone())
+                        .unwrap_or_default()
+                })
+                .collect(),
+            // Cột git chỉ 16px, không có nội dung dài; bỏ qua.
+            _ => return,
+        };
+        // Cột tên có checkbox + icon ở đầu.
+        let extra = if id == "name" { 48 } else { 0 };
+        let (min, max) = column_bounds(id);
+        let width = fit_width(texts.iter().map(|s| s.as_str()), min, max, extra);
+        (width, s.settings.column_order.clone())
+    };
+
+    {
+        let mut s = app.borrow_mut();
+        s.settings.column_widths.insert(id.to_string(), width);
+    }
+    crate::state::persist_ui(app);
+    let widths = app.borrow().settings.column_widths.clone();
+    apply_column_widths(ui, &widths, &order);
+}
+
 /// Tự vừa bề rộng cột theo nội dung đang hiển thị.///
 /// Bề rộng được tính từ dữ liệu đã có trong `Tab::entries`, không đọc đĩa. Kết
 /// quả ghi vào `settings.column_widths` và đẩy ngay vào UI, nên lần mở sau vẫn

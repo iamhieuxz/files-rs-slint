@@ -272,6 +272,26 @@ fn show_background_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, x: f32, y: f32) {
             true,
             false,
         ),
+        // Vừa cột theo nội dung: trước đây chỉ có trong Command Palette nên
+        // người dùng khó tìm. Đặt cạnh các lệnh hiển thị khác.
+        menu(
+            "autofit-columns",
+            "Vừa cột theo nội dung",
+            "resize",
+            "",
+            true,
+            false,
+        ),
+        // Nhóm: các mục phẳng thay vì menu con. Menu con chỉ có một cơ chế
+        // (`open-with`) và nó gắn với danh sách ứng dụng, không dùng lại được
+        // cho danh sách tiêu chí nhóm.
+        menu_header("Nhóm theo"),
+        menu("group-none", "Không nhóm", "apps_list", "", true, false),
+        menu("group-name", "Tên", "text_bullet_list", "", true, false),
+        menu("group-modified", "Ngày sửa", "clock", "", true, false),
+        menu("group-size", "Kích thước", "resize", "", true, false),
+        menu("group-kind", "Loại", "document", "", true, false),
+        menu("group-tag", "Thẻ màu", "tag", "", true, false),
         menu(
             "toggle-hidden",
             if a.borrow().show_hidden {
@@ -763,6 +783,13 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
                     format!("Không sao chép được: {}", e.message).as_str(),
                 )),
             }
+        });
+    }
+    {
+        let (w, a) = (ui.as_weak(), app.clone());
+        ui.on_autofit_column(move |id| {
+            let Some(ui) = w.upgrade() else { return };
+            crate::view::autofit_column(&ui, &a, id.as_str());
         });
     }
     {

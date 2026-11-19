@@ -463,6 +463,34 @@ mod tests {
     }
 
     #[test]
+    fn autofit_produces_wider_columns_for_longer_names() {
+        // `autofit_columns` ghi vào `settings.column_widths`. Test này kiểm tra
+        // phần tính toán (không cần UI): cột phải rộng hơn khi tên dài hơn, và
+        // phải kẹp trong giới hạn của `column_bounds`.
+        use crate::settings::column_bounds;
+        use files_core::autofit::fit_width;
+
+        let short = ["a.txt".to_string(), "b.txt".to_string()];
+        let long = [
+            "mot-ten-rat-dai-voi-nhieu-ky-tu-de-kiem-tra.txt".to_string(),
+            "b.txt".to_string(),
+        ];
+
+        let (nmin, nmax) = column_bounds("name");
+        let w_short = fit_width(short.iter().map(|s| s.as_str()), nmin, nmax, 48);
+        let w_long = fit_width(long.iter().map(|s| s.as_str()), nmin, nmax, 48);
+
+        assert!(
+            w_long > w_short,
+            "tên dài phải cho cột rộng hơn: {w_long} <= {w_short}"
+        );
+        assert!(
+            w_short >= nmin && w_long <= nmax,
+            "phải kẹp trong column_bounds"
+        );
+    }
+
+    #[test]
     fn grouping_keeps_every_visible_row_exactly_once() {
         // Nhóm không được làm mất hoặc lặp hàng: `visible` là nguồn sự thật và
         // mọi chỉ số phải xuất hiện đúng một lần trong thứ tự đã nhóm.

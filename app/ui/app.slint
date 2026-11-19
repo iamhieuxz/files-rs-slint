@@ -283,6 +283,8 @@ export component AppWindow inherits Window {
     callback window-drag(length, length);
     // Kéo cột / đổi thứ tự cột / kéo viền cửa sổ.
     callback column-resized(string, length);
+    // Bấm đúp vạch chia: tự vừa đúng cột này theo nội dung.
+    callback autofit-column(string);
     callback column-moved(string, int);
     callback window-resize(string);
 
@@ -1097,6 +1099,12 @@ export component AppWindow inherits Window {
                                         mouse-cursor: ew-resize;
                                         property <length> start-x: 0;
                                         property <length> start-width: 0;
+                                        // Bấm đúp vạch chia = tự vừa cột này theo nội
+                                        // dung, giống Explorer. Một cú bấm rồi kéo vẫn
+                                        // là đổi bề rộng thủ công.
+                                        double-clicked => {
+                                            root.autofit-column(id);
+                                        }
                                         pointer-event(e) => {
                                             let px = self.absolute-position.x + self.mouse-x;
                                             if (e.kind == PointerEventKind.down) {
