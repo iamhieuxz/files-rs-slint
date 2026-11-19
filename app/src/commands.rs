@@ -207,6 +207,9 @@ pub fn toggle_theme(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     app.borrow_mut().dark = dark;
     refresh_theme(ui, dark);
     persist_ui(app);
+    // Cửa sổ Settings có `Theme` riêng; đổi theme ở cửa sổ chính phải đổi theo,
+    // nếu không hai cửa sổ lệch nền nhau.
+    crate::settings_page::refresh_open(app);
 }
 
 pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {

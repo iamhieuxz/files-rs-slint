@@ -259,6 +259,10 @@ fn install(ui: &SettingsWindow, app: &Rc<RefCell<App>>, command: impl Fn(&str) +
 /// sổ chính để các công tắc hiện đúng lựa chọn hiện tại.
 pub fn refresh(ui: &SettingsWindow, app: &Rc<RefCell<App>>) {
     let a = app.borrow();
+    // `Theme` là global riêng của từng cây component, không dùng chung giữa hai
+    // cửa sổ. Thiếu dòng này thì cửa sổ Settings luôn sáng dù cửa sổ chính đang
+    // tối — nền hai bên lệch nhau.
+    ui.global::<Theme>().set_dark(a.dark);
     let tag_list: Vec<TagInfo> = a
         .tags
         .tags
