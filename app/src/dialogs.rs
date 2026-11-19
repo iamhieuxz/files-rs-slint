@@ -66,6 +66,35 @@ pub fn ask_rename(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.set_dialog_open(true);
 }
 
+/// Hỏi tên mới cho một thẻ, gọi từ cửa sổ Settings.
+///
+/// Dùng lại hộp thoại của cửa sổ chính thay vì dựng hộp thoại thứ hai: chỉ một
+/// nơi xử lý xác nhận, nên không có đường ghi nào bị bỏ sót.
+pub fn ask_tag_rename(ui: &AppWindow, uid: &str) {
+    ui.set_dialog_kind(SharedString::from("settings-tag-rename"));
+    ui.set_dialog_title(SharedString::from("Đổi tên thẻ"));
+    ui.set_dialog_text(SharedString::from("Nhập tên mới cho thẻ"));
+    ui.set_dialog_primary_label(SharedString::from("Đổi tên"));
+    ui.set_dialog_has_input(true);
+    ui.set_dialog_allows_empty(false);
+    ui.set_dialog_value(SharedString::from(""));
+    ui.set_dialog_target(SharedString::from(uid));
+    ui.set_dialog_open(true);
+}
+
+/// Hỏi mã màu mới cho một thẻ.
+pub fn ask_tag_recolor(ui: &AppWindow, uid: &str) {
+    ui.set_dialog_kind(SharedString::from("settings-tag-recolor"));
+    ui.set_dialog_title(SharedString::from("Đổi màu thẻ"));
+    ui.set_dialog_text(SharedString::from("Nhập mã màu dạng #RRGGBB"));
+    ui.set_dialog_primary_label(SharedString::from("Đổi màu"));
+    ui.set_dialog_has_input(true);
+    ui.set_dialog_allows_empty(false);
+    ui.set_dialog_value(SharedString::from("#0072BD"));
+    ui.set_dialog_target(SharedString::from(uid));
+    ui.set_dialog_open(true);
+}
+
 pub fn ask_new(ui: &AppWindow, kind: &str) {
     let (title, placeholder, label) = if kind == "new-folder" {
         ("Thư mục mới", "Thư mục mới", "Tạo")
@@ -156,11 +185,17 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
         // `dialog-target` vì ô nhập chỉ trả về chuỗi.
         "settings-tag-rename" => {
             let target = ui.get_dialog_target().to_string();
-            crate::settings_page::apply_rename(ui, app, &target, value);
+            crate::settings_page::apply_rename(app, &target, value);
         }
         "settings-tag-recolor" => {
             let target = ui.get_dialog_target().to_string();
-            crate::settings_page::apply_recolor(ui, app, &target, value);
+            if crate::tags::parse_hex(value).is_none() {
+                ui.set_error_text(SharedString::from(
+                    "Mã màu phải có dạng #RRGGBB, ví dụ #0072BD",
+                ));
+            } else {
+                crate::settings_page::apply_recolor(app, &target, value);
+            }
         }
         // Nút chính của hộp thoại trùng tên là "Giữ cả hai".
         "confirm-empty-bin" => match files_fs::empty_recycle_bin() {

@@ -1,21 +1,21 @@
-//! Trang Settings: đọc/ghi cấu hình qua UI thay vì sửa `settings.json` tay.
+//! Cửa sổ Settings độc lập.
 //!
-//! Mỗi thay đổi đi qua đúng đường đã có: `commands::toggle_*` hoặc
-//! `commands::set_view_mode`, nên hành vi ở đây và ở command bar không thể lệch
-//! nhau. Module này chỉ lo phần riêng của trang: danh sách trang, dữ liệu thẻ,
-//! đường dẫn cấu hình và việc mở lại trang.
+//! Mở dạng cửa sổ riêng thay vì chiếm vùng nội dung của cửa sổ duyệt tệp: người
+//! dùng không mất ngữ cảnh đang xem, và cửa sổ chính không bị đổi kích thước khi
+//! mở cấu hình.
+//!
+//! Mỗi thay đổi đi qua đúng bảng lệnh đã có của cửa sổ chính, nên đường ghi
+//! `settings.json` không bị nhân đôi: cửa sổ Settings chỉ phát lệnh, cửa sổ chính
+//! thực thi và lưu.
 
 use crate::slint_generated::*;
 use crate::state::App;
 use crate::{logging, tags};
-use slint::{ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Các trang có trong cửa sổ Settings, theo đúng thứ tự hiển thị.
-///
-/// Giữ ở đây thay vì khai trong Slint để Rust và UI dùng chung một danh sách:
-/// thêm trang chỉ cần sửa một chỗ.
 pub const PAGES: &[(&str, &str, &str)] = &[
     ("appearance", "Giao diện", "weather_moon"),
     ("layout", "Bố cục", "panel_split"),
@@ -25,14 +25,108 @@ pub const PAGES: &[(&str, &str, &str)] = &[
     ("about", "Giới thiệu", "info"),
 ];
 
-/// Trang mặc định khi mở Settings lần đầu.
+/// Trang mặc định khi mở Settings.
 pub const DEFAULT_PAGE: &str = "appearance";
 
-/// Điền các property tĩnh mà trang Settings cần.
+// Cửa sổ Settings đang mở, nếu có.
+//
+// Chỉ một cửa sổ tại một thời điểm: mở lần nữa thì đưa cửa sổ cũ lên trước thay
+// vì tạo thêm, để hai cửa sổ không ghi đè cấu hình của nhau.
+//
+// `Timer` đi kèm là **chủ sở hữu thật** của cửa sổ. Slint chỉ giữ `VRc` sống khi
+// còn một `Timer` hoặc callback đang hoạt động trỏ tới nó; nếu chỉ cất
+// `SettingsWindow` trong thread-local thì cửa sổ tự đóng sau vài giây. Cửa sổ
+// chính tránh được điều này nhờ các event pump giữ `Timer`.
+struct OpenSettings {
+    ui: SettingsWindow,
+    /// Giữ cửa sổ sống; dừng timer là điều kiện cần để đóng hẳn.
+    _keepalive: slint::Timer,
+}
+
+thread_local! {
+    static OPEN: RefCell<Option<OpenSettings>> = const { RefCell::new(None) };
+}
+
+/// Mở cửa sổ Settings, hoặc đưa cửa sổ đang có lên trước.
 ///
-/// Gọi một lần lúc mở cửa sổ; dữ liệu động (thẻ, đường dẫn) có hàm riêng để
-/// làm mới sau khi người dùng sửa.
-pub fn install(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+/// `command` là hàm của cửa sổ chính; cửa sổ Settings gọi lại nó cho mọi thay
+/// đổi cấu hình, nhờ vậy chỉ có một đường ghi.
+pub fn open(
+    app: &Rc<RefCell<App>>,
+    page: &str,
+    command: impl Fn(&str) + 'static,
+) -> Result<(), slint::PlatformError> {
+    // Đã mở thì chỉ cần đưa lên trước và chuyển trang.
+    let already = OPEN.with(|slot| slot.borrow().is_some());
+    if already {
+        OPEN.with(|slot| {
+            if let Some(existing) = slot.borrow().as_ref() {
+                if let Some(target) = valid_page(page) {
+                    existing.ui.set_page(SharedString::from(target));
+                }
+                refresh(&existing.ui, app);
+                let _ = existing.ui.show();
+            }
+        });
+        return Ok(());
+    }
+
+    let ui = SettingsWindow::new()?;
+    install(&ui, app, command);
+    if let Some(target) = valid_page(page) {
+        ui.set_page(SharedString::from(target));
+    }
+
+    // Đóng cửa sổ thì quên handle để lần sau tạo mới.
+    {
+        let weak = ui.as_weak();
+        ui.on_window_close(move || {
+            if let Some(ui) = weak.upgrade() {
+                let _ = ui.hide();
+            }
+            OPEN.with(|slot| *slot.borrow_mut() = None);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_close_requested(move || {
+            if let Some(ui) = weak.upgrade() {
+                let _ = ui.hide();
+            }
+            OPEN.with(|slot| *slot.borrow_mut() = None);
+        });
+    }
+
+    ui.show()?;
+    // Timer giữ cửa sổ sống. Không dùng `mem::forget`: handle nằm trong `OPEN`
+    // nên khi đóng, `OPEN` được dọn và timer bị thả theo.
+    let keepalive = slint::Timer::default();
+    OPEN.with(|slot| {
+        *slot.borrow_mut() = Some(OpenSettings {
+            ui,
+            _keepalive: keepalive,
+        })
+    });
+    Ok(())
+}
+
+/// Đóng cửa sổ Settings nếu đang mở.
+///
+/// Cửa sổ tự đóng khi bấm nút X, nhưng lệnh "Đóng Settings" từ Command Palette
+/// hoặc phím Esc ở cửa sổ chính cũng cần đóng được nó.
+#[allow(dead_code)]
+pub fn close() {
+    OPEN.with(|slot| {
+        if let Some(open) = slot.borrow_mut().take() {
+            let _ = open.ui.hide();
+        }
+    });
+}
+
+/// Điền danh sách trang và nối callback.
+fn install(ui: &SettingsWindow, app: &Rc<RefCell<App>>, command: impl Fn(&str) + 'static) {
+    // Bọc một lần rồi chia sẻ: mọi callback đều cần gọi cùng một hàm.
+    let command = Rc::new(command);
     let pages: Vec<SettingsPageInfo> = PAGES
         .iter()
         .map(|(id, label, icon)| SettingsPageInfo {
@@ -41,164 +135,204 @@ pub fn install(ui: &AppWindow, app: &Rc<RefCell<App>>) {
             icon: SharedString::from(*icon),
         })
         .collect();
-    ui.set_settings_pages(ModelRc::new(VecModel::from(pages)));
-    ui.set_settings_page(SharedString::from(DEFAULT_PAGE));
+    ui.set_pages(ModelRc::new(VecModel::from(pages)));
+    ui.set_page(SharedString::from(DEFAULT_PAGE));
     refresh(ui, app);
+
+    // Lệnh gửi về cửa sổ chính. Sau mỗi lệnh phải đọc lại trạng thái vì cửa sổ
+    // chính mới là nơi giữ giá trị thật.
+    {
+        let (weak, a, cmd) = (ui.as_weak(), app.clone(), command.clone());
+        ui.on_command(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            cmd(id.as_str());
+            refresh(&ui, &a);
+        });
+    }
+
+    {
+        let (weak, a) = (ui.as_weak(), app.clone());
+        ui.on_page_changed(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_page(id);
+            refresh(&ui, &a);
+        });
+    }
+
+    {
+        let (weak, cmd) = (ui.as_weak(), command.clone());
+        ui.on_tag_rename(move |uid| {
+            let Some(_ui) = weak.upgrade() else { return };
+            // Hộp thoại nhập liệu nằm ở cửa sổ chính: nó đã có sẵn `DialogSurface`
+            // và đường xác nhận. Cửa sổ Settings chỉ yêu cầu mở nó.
+            cmd(&format!("settings-tag-rename:{uid}"));
+        });
+    }
+    {
+        let (weak, cmd) = (ui.as_weak(), command.clone());
+        ui.on_tag_recolor(move |uid| {
+            let Some(_ui) = weak.upgrade() else { return };
+            cmd(&format!("settings-tag-recolor:{uid}"));
+        });
+    }
+    {
+        let (weak, a, cmd) = (ui.as_weak(), app.clone(), command.clone());
+        ui.on_tag_remove(move |uid| {
+            let Some(ui) = weak.upgrade() else { return };
+            let _ = &cmd;
+            remove_tag(&ui, &a, uid.as_str());
+        });
+    }
+    {
+        let (weak, a) = (ui.as_weak(), app.clone());
+        ui.on_tag_add(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            add_tag(&ui, &a);
+        });
+    }
+    {
+        let (weak, cmd) = (ui.as_weak(), command.clone());
+        ui.on_open_location(move |path| {
+            let Some(_ui) = weak.upgrade() else { return };
+            cmd(&format!("settings-open:{path}"));
+        });
+    }
+
+    // Nút cửa sổ và kéo/đổi kích thước, giống cửa sổ chính.
+    {
+        let weak = ui.as_weak();
+        ui.on_window_minimize(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.window().set_minimized(true);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_window_toggle_maximize(move || {
+            if let Some(ui) = weak.upgrade() {
+                let max = !ui.get_is_maximized();
+                ui.set_is_maximized(max);
+                ui.window().set_maximized(max);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_window_drag(move |_, _| {
+            let Some(ui) = weak.upgrade() else { return };
+            use slint::winit_030::WinitWindowAccessor;
+            ui.window().with_winit_window(|win| {
+                if let Err(e) = win.drag_window() {
+                    logging::write(&format!("Settings: drag_window lỗi: {e}"));
+                }
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_window_resize(move |edge| {
+            let Some(ui) = weak.upgrade() else { return };
+            use slint::winit_030::winit::window::ResizeDirection;
+            use slint::winit_030::WinitWindowAccessor;
+            let direction = match edge.as_str() {
+                "n" => ResizeDirection::North,
+                "s" => ResizeDirection::South,
+                "e" => ResizeDirection::East,
+                "w" => ResizeDirection::West,
+                "ne" => ResizeDirection::NorthEast,
+                "nw" => ResizeDirection::NorthWest,
+                "se" => ResizeDirection::SouthEast,
+                "sw" => ResizeDirection::SouthWest,
+                _ => return,
+            };
+            ui.window().with_winit_window(|win| {
+                if let Err(e) = win.drag_resize_window(direction) {
+                    logging::write(&format!("Settings: drag_resize_window lỗi: {e}"));
+                }
+            });
+        });
+    }
 }
 
-/// Làm mới dữ liệu động: danh sách thẻ và các đường dẫn cấu hình.
-pub fn refresh(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let (tag_list, settings_path, tags_path, version) = {
-        let a = app.borrow();
-        let list: Vec<TagInfo> = a
-            .tags
-            .tags
-            .iter()
-            .map(|t| TagInfo {
-                uid: SharedString::from(t.uid.as_str()),
-                name: SharedString::from(t.name.as_str()),
-                color: crate::view::color_from_u32(tags::parse_hex(&t.color).unwrap_or(0x808080)),
-            })
-            .collect();
-        (
-            list,
-            a.settings_path.to_string_lossy().into_owned(),
-            a.tag_path.to_string_lossy().into_owned(),
-            env!("CARGO_PKG_VERSION").to_string(),
-        )
-    };
-    ui.set_settings_tags(ModelRc::new(VecModel::from(tag_list)));
-    ui.set_settings_settings_path(SharedString::from(settings_path.as_str()));
-    ui.set_settings_tags_path(SharedString::from(tags_path.as_str()));
-    ui.set_settings_log_path(SharedString::from(
+/// Làm mới dữ liệu động: thẻ, đường dẫn cấu hình, và trạng thái gương của cửa
+/// sổ chính để các công tắc hiện đúng lựa chọn hiện tại.
+pub fn refresh(ui: &SettingsWindow, app: &Rc<RefCell<App>>) {
+    let a = app.borrow();
+    let tag_list: Vec<TagInfo> = a
+        .tags
+        .tags
+        .iter()
+        .map(|t| TagInfo {
+            uid: SharedString::from(t.uid.as_str()),
+            name: SharedString::from(t.name.as_str()),
+            color: crate::view::color_from_u32(tags::parse_hex(&t.color).unwrap_or(0x808080)),
+        })
+        .collect();
+    ui.set_tags(ModelRc::new(VecModel::from(tag_list)));
+    ui.set_settings_path(SharedString::from(
+        a.settings_path.to_string_lossy().as_ref(),
+    ));
+    ui.set_tags_path(SharedString::from(a.tag_path.to_string_lossy().as_ref()));
+    ui.set_log_path(SharedString::from(
         logging::log_path().to_string_lossy().as_ref(),
     ));
-    ui.set_settings_version(SharedString::from(version.as_str()));
+    ui.set_version(SharedString::from(env!("CARGO_PKG_VERSION")));
+
+    ui.set_dark(a.dark);
+    ui.set_view_mode(a.view_mode);
+    ui.set_show_sidebar(a.show_sidebar);
+    ui.set_show_preview(a.show_preview);
+    ui.set_dual_pane(a.right.is_some());
+    ui.set_show_hidden(a.show_hidden);
+    ui.set_show_extensions(a.show_extensions);
+    ui.set_folders_first(a.folders_first);
 }
 
-/// Mở trang Settings ở một trang cụ thể.
-pub fn open(ui: &AppWindow, app: &Rc<RefCell<App>>, page: &str) {
-    refresh(ui, app);
-    let target = if PAGES.iter().any(|(id, _, _)| *id == page) {
-        page
-    } else {
-        DEFAULT_PAGE
-    };
-    ui.set_settings_page(SharedString::from(target));
-    ui.set_view(SharedString::from("settings"));
+/// Trả `Some(id)` khi `page` là trang có thật.
+fn valid_page(page: &str) -> Option<&'static str> {
+    PAGES
+        .iter()
+        .find(|(id, _, _)| *id == page)
+        .map(|(id, _, _)| *id)
 }
 
-/// Đóng trang Settings, quay lại duyệt tệp.
-pub fn close(ui: &AppWindow) {
-    ui.set_view(SharedString::from("files"));
-}
-
-/// Đổi tên một thẻ.
+/// Áp tên mới cho thẻ, gọi từ hộp thoại của cửa sổ chính.
 ///
-/// Giữ nguyên `uid` để mọi tệp đã gắn thẻ không mất màu. Ghi ngay để tắt app
-/// đột ngột không làm mất thay đổi.
-pub fn rename_tag(ui: &AppWindow, app: &Rc<RefCell<App>>, uid: &str) {
-    let Some(current) = current_tag_name(app, uid) else {
-        return;
-    };
-    ui.set_dialog_kind(SharedString::from("settings-tag-rename"));
-    ui.set_dialog_title(SharedString::from("Đổi tên thẻ"));
-    ui.set_dialog_text(SharedString::from("Nhập tên mới cho thẻ"));
-    ui.set_dialog_primary_label(SharedString::from("Đổi tên"));
-    ui.set_dialog_value(SharedString::from(current.as_str()));
-    ui.set_dialog_has_input(true);
-    ui.set_dialog_allows_empty(false);
-    // Nhớ thẻ nào đang sửa: hộp thoại chỉ trả về chuỗi.
-    ui.set_dialog_target(SharedString::from(uid));
-    ui.set_dialog_open(true);
-}
-
-/// Áp tên mới sau khi hộp thoại xác nhận.
-pub fn apply_rename(ui: &AppWindow, app: &Rc<RefCell<App>>, uid: &str, name: &str) {
+/// Hộp thoại nhập liệu nằm ở cửa sổ chính (`dialogs::ask_tag_rename`) vì cửa sổ
+/// Settings chỉ có công tắc và danh sách. Cửa sổ chính ghi nhớ thẻ đang sửa
+/// trong `dialog-target` rồi gọi hàm này khi người dùng xác nhận.
+pub fn apply_rename(app: &Rc<RefCell<App>>, uid: &str, name: &str) {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return;
     }
-    {
-        let mut a = app.borrow_mut();
-        let mut store = tags::TagStore::load(&a.tag_path);
-        let Some(tag) = store.tags.iter_mut().find(|t| t.uid == uid) else {
-            return;
-        };
-        tag.name = trimmed.to_string();
-        a.tags = store.clone();
-        let path = a.tag_path.clone();
-        if let Err(e) = store.save(&path) {
-            logging::write(&format!("không lưu được tên thẻ: {e}"));
-            ui.set_error_text(SharedString::from(
-                format!("Không lưu được thẻ: {e}").as_str(),
-            ));
-            return;
-        }
-    }
-    ui.set_status_message(SharedString::from(
-        format!("Đã đổi tên thẻ thành {trimmed}").as_str(),
-    ));
-    refresh(ui, app);
-    crate::view::push_view(ui, app);
+    apply_tag_change(app, uid, |tag| tag.name = trimmed.to_string());
+    refresh_open(app);
 }
 
-/// Đổi màu một thẻ.
-pub fn recolor_tag(ui: &AppWindow, app: &Rc<RefCell<App>>, uid: &str) {
-    let Some(current) = current_tag_color(app, uid) else {
-        return;
-    };
-    ui.set_dialog_kind(SharedString::from("settings-tag-recolor"));
-    ui.set_dialog_title(SharedString::from("Đổi màu thẻ"));
-    ui.set_dialog_text(SharedString::from("Nhập mã màu dạng #RRGGBB"));
-    ui.set_dialog_primary_label(SharedString::from("Đổi màu"));
-    ui.set_dialog_value(SharedString::from(current.as_str()));
-    ui.set_dialog_has_input(true);
-    ui.set_dialog_allows_empty(false);
-    ui.set_dialog_target(SharedString::from(uid));
-    ui.set_dialog_open(true);
-}
-
-/// Áp màu mới sau khi hộp thoại xác nhận.
-pub fn apply_recolor(ui: &AppWindow, app: &Rc<RefCell<App>>, uid: &str, color: &str) {
-    // Chỉ nhận mã hợp lệ: một chuỗi rác sẽ làm icon mất màu mà không ai hiểu vì sao.
+/// Áp màu mới cho thẻ, gọi từ hộp thoại của cửa sổ chính.
+pub fn apply_recolor(app: &Rc<RefCell<App>>, uid: &str, color: &str) {
     if tags::parse_hex(color).is_none() {
-        ui.set_error_text(SharedString::from(
-            "Mã màu phải có dạng #RRGGBB, ví dụ #0072BD",
-        ));
         return;
     }
     let normalized = format!("#{}", color.trim().trim_start_matches('#').to_uppercase());
-    {
-        let mut a = app.borrow_mut();
-        let mut store = tags::TagStore::load(&a.tag_path);
-        let Some(tag) = store.tags.iter_mut().find(|t| t.uid == uid) else {
-            return;
-        };
-        tag.color = normalized.clone();
-        a.tags = store.clone();
-        let path = a.tag_path.clone();
-        if let Err(e) = store.save(&path) {
-            logging::write(&format!("không lưu được màu thẻ: {e}"));
-            ui.set_error_text(SharedString::from(
-                format!("Không lưu được thẻ: {e}").as_str(),
-            ));
-            return;
-        }
-    }
-    ui.set_status_message(SharedString::from(
-        format!("Đã đổi màu thẻ thành {normalized}").as_str(),
-    ));
-    refresh(ui, app);
-    crate::view::push_view(ui, app);
+    apply_tag_change(app, uid, |tag| tag.color = normalized);
+    refresh_open(app);
 }
 
-/// Xoá một thẻ.
-///
-/// Thẻ bị xoá khỏi định nghĩa và khỏi mọi tệp đang gắn nó; tệp vẫn còn, chỉ mất
-/// màu. Đây là hành vi của Files gốc và cũng là điều người dùng mong đợi.
-pub fn remove_tag(ui: &AppWindow, app: &Rc<RefCell<App>>, uid: &str) {
-    let removed = {
+/// Làm mới cửa sổ Settings nếu nó đang mở.
+pub fn refresh_open(app: &Rc<RefCell<App>>) {
+    OPEN.with(|slot| {
+        if let Some(open) = slot.borrow().as_ref() {
+            refresh(&open.ui, app);
+        }
+    });
+}
+
+/// Xoá một thẻ khỏi định nghĩa và khỏi mọi tệp đang gắn nó.
+pub fn remove_tag(ui: &SettingsWindow, app: &Rc<RefCell<App>>, uid: &str) {
+    {
         let mut a = app.borrow_mut();
         let mut store = tags::TagStore::load(&a.tag_path);
         let before = store.tags.len();
@@ -214,28 +348,20 @@ pub fn remove_tag(ui: &AppWindow, app: &Rc<RefCell<App>>, uid: &str) {
         let path = a.tag_path.clone();
         if let Err(e) = store.save(&path) {
             logging::write(&format!("không lưu được thẻ sau khi xoá: {e}"));
-            ui.set_error_text(SharedString::from(
-                format!("Không lưu được thẻ: {e}").as_str(),
-            ));
             return;
         }
-        true
-    };
-    if removed {
-        ui.set_status_message(SharedString::from("Đã xoá thẻ"));
     }
     refresh(ui, app);
-    crate::view::push_view(ui, app);
 }
 
 /// Thêm một thẻ mới với tên và màu mặc định.
-pub fn add_tag(ui: &AppWindow, app: &Rc<RefCell<App>>) {
-    let count = {
+pub fn add_tag(ui: &SettingsWindow, app: &Rc<RefCell<App>>) {
+    {
         let mut a = app.borrow_mut();
         let mut store = tags::TagStore::load(&a.tag_path);
         let n = store.tags.len() + 1;
         store.tags.push(tags::Tag {
-            // uid mới không được trùng uid cũ; dùng số thứ tự và tên làm khoá.
+            // uid mới không trùng uid cũ: dùng số thứ tự hiện tại.
             uid: format!("tag-{n}-{}", store.tags.len()),
             name: format!("Thẻ {n}"),
             color: "#808080".into(),
@@ -244,14 +370,9 @@ pub fn add_tag(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let path = a.tag_path.clone();
         if let Err(e) = store.save(&path) {
             logging::write(&format!("không lưu được thẻ mới: {e}"));
-            ui.set_error_text(SharedString::from(
-                format!("Không lưu được thẻ: {e}").as_str(),
-            ));
             return;
         }
-        n
-    };
-    ui.set_status_message(SharedString::from(format!("Đã thêm Thẻ {count}").as_str()));
+    }
     refresh(ui, app);
 }
 
@@ -274,28 +395,24 @@ pub fn open_location(ui: &AppWindow, app: &Rc<RefCell<App>>, path: &str) {
     if folder.as_os_str().is_empty() {
         return;
     }
-    // Điều hướng trong app thay vì mở Explorer: người dùng đang ở đây để sửa
-    // cấu hình, và một cửa sổ mới chỉ làm họ mất chỗ.
-    ui.set_view(SharedString::from("files"));
+    // Điều hướng trong cửa sổ chính thay vì mở Explorer: người dùng đang ở đây
+    // để sửa cấu hình, mở cửa sổ mới chỉ làm mất ngữ cảnh.
     crate::navigation::navigate_to(ui, app, folder);
 }
 
-fn current_tag_name(app: &Rc<RefCell<App>>, uid: &str) -> Option<String> {
-    app.borrow()
-        .tags
-        .tags
-        .iter()
-        .find(|t| t.uid == uid)
-        .map(|t| t.name.clone())
-}
-
-fn current_tag_color(app: &Rc<RefCell<App>>, uid: &str) -> Option<String> {
-    app.borrow()
-        .tags
-        .tags
-        .iter()
-        .find(|t| t.uid == uid)
-        .map(|t| t.color.clone())
+/// Áp một thay đổi lên một thẻ rồi lưu ngay.
+fn apply_tag_change(app: &Rc<RefCell<App>>, uid: &str, change: impl FnOnce(&mut tags::Tag)) {
+    let mut a = app.borrow_mut();
+    let mut store = tags::TagStore::load(&a.tag_path);
+    let Some(tag) = store.tags.iter_mut().find(|t| t.uid == uid) else {
+        return;
+    };
+    change(tag);
+    a.tags = store.clone();
+    let path = a.tag_path.clone();
+    if let Err(e) = store.save(&path) {
+        logging::write(&format!("không lưu được thẻ: {e}"));
+    }
 }
 
 #[cfg(test)]
@@ -304,13 +421,6 @@ mod tests {
 
     fn page_ids() -> Vec<&'static str> {
         PAGES.iter().map(|(id, _, _)| *id).collect()
-    }
-
-    fn page_label(id: &str) -> Option<&'static str> {
-        PAGES
-            .iter()
-            .find(|(page, _, _)| *page == id)
-            .map(|(_, label, _)| *label)
     }
 
     #[test]
@@ -324,7 +434,6 @@ mod tests {
 
     #[test]
     fn page_ids_are_unique() {
-        // Trùng id khiến hai mục cùng sáng khi chọn một trang.
         let mut ids = page_ids();
         let before = ids.len();
         ids.sort_unstable();
@@ -334,21 +443,17 @@ mod tests {
 
     #[test]
     fn the_default_page_exists() {
-        assert!(
-            page_ids().contains(&DEFAULT_PAGE),
-            "trang mặc định phải nằm trong danh sách"
-        );
+        assert!(page_ids().contains(&DEFAULT_PAGE));
     }
 
     #[test]
-    fn an_unknown_page_reports_no_label() {
-        assert_eq!(page_label("khong-ton-tai"), None);
-        assert_eq!(page_label("appearance"), Some("Giao diện"));
+    fn an_unknown_page_is_rejected() {
+        assert_eq!(valid_page("khong-ton-tai"), None);
+        assert_eq!(valid_page("appearance"), Some("appearance"));
     }
 
     #[test]
     fn the_six_pages_cover_the_documented_features() {
-        // Bốn trang đầu là yêu cầu của kế hoạch C1–C4; About là trang thứ năm.
         let ids = page_ids();
         for required in [
             "appearance",

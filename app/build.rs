@@ -6,6 +6,9 @@
 //      app cần quyền administrator; thiếu icon thì taskbar hiện icon mặc định.
 
 fn main() {
+    // Một lần biên dịch duy nhất: `app.slint` re-export `SettingsWindow`, nên cả
+    // hai cửa sổ nằm trong cùng module sinh ra. Biên dịch hai lần riêng sẽ khiến
+    // lần sau ghi đè biến môi trường của lần trước.
     slint_build::compile("ui/app.slint").expect("failed to compile Slint UI");
 
     #[cfg(windows)]

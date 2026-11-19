@@ -1,0 +1,332 @@
+// Cửa sổ Settings độc lập.
+//
+// Tách khỏi `app.slint` để mở dạng cửa sổ riêng: cửa sổ duyệt tệp giữ nguyên
+// kích thước, còn Settings có kích thước tối thiểu riêng và không bị ép theo
+// bề rộng danh sách tệp.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { FluentIcon } from "icons.slint";
+import { FluentButton, IconButton } from "widgets.slint";
+import {
+    SectionTitle, SettingChoice, SettingInfo, SettingToggle, SettingsNavItem, TagRow,
+} from "settings_page.slint";
+
+export struct SettingsPageInfo {
+    id: string,
+    label: string,
+    icon: string,
+}
+
+export struct TagInfo {
+    uid: string,
+    name: string,
+    color: color,
+}
+
+export component SettingsWindow inherits Window {
+    title: "Cài đặt — Files RS";
+    // Kích thước riêng: đủ chỗ cho hai cột và không phụ thuộc cửa sổ duyệt tệp.
+    preferred-width: 860px;
+    preferred-height: 620px;
+    min-width: 640px;
+    min-height: 420px;
+    background: Theme.solid-base;
+    default-font-family: Theme.font-family;
+    no-frame: true;
+
+    in-out property <bool> is-maximized: false;
+    in-out property <[SettingsPageInfo]> pages;
+    in-out property <string> page: "appearance";
+    in-out property <[TagInfo]> tags;
+    in-out property <string> log-path;
+    in-out property <string> settings-path;
+    in-out property <string> tags-path;
+    in-out property <string> version;
+
+    // Trạng thái gương từ cửa sổ chính, chỉ để hiển thị đúng lựa chọn hiện tại.
+    in-out property <bool> dark: false;
+    in-out property <int> view-mode: 0;
+    in-out property <bool> show-sidebar: true;
+    in-out property <bool> show-preview: true;
+    in-out property <bool> dual-pane: false;
+    in-out property <bool> show-hidden: false;
+    in-out property <bool> show-extensions: true;
+    in-out property <bool> folders-first: true;
+
+    callback close-requested();
+    callback page-changed(string);
+    callback tag-rename(string);
+    callback tag-recolor(string);
+    callback tag-remove(string);
+    callback tag-add();
+    callback open-location(string);
+    // Lệnh gửi về cửa sổ chính; dùng lại bảng lệnh sẵn có nên không nhân đôi
+    // đường ghi cấu hình.
+    callback command(string);
+    callback window-minimize();
+    callback window-toggle-maximize();
+    callback window-close();
+    callback window-drag(length, length);
+    callback window-resize(string);
+
+    init => { key-root.focus(); }
+
+    key-root := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) { root.close-requested(); return accept; }
+            reject
+        }
+    }
+
+    VerticalLayout {
+        // ---- title bar tự vẽ, giống cửa sổ chính ----
+        Rectangle {
+            height: Theme.tab-height;
+            background: Theme.solid-base;
+
+            TouchArea {
+                x: 0;
+                y: 0;
+                width: parent.width - 138px;
+                height: parent.height;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                        root.window-drag(self.mouse-x, self.mouse-y);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                x: parent.width - 138px;
+                width: 138px;
+                IconButton {
+                    icon: root.is-maximized ? "square_multiple" : "square";
+                    accessible-text: root.is-maximized ? "Khôi phục" : "Phóng to";
+                    clicked => { root.window-toggle-maximize(); }
+                }
+                IconButton {
+                    icon: "subtract";
+                    accessible-text: "Thu nhỏ";
+                    clicked => { root.window-minimize(); }
+                }
+                IconButton {
+                    icon: "dismiss";
+                    accessible-text: "Đóng";
+                    clicked => { root.window-close(); }
+                }
+            }
+
+            // Vạch kéo đổi kích thước ở các cạnh.
+            for edge in ["n", "s", "e", "w", "ne", "nw", "se", "sw"]: TouchArea {
+                x: edge == "w" || edge == "nw" || edge == "sw" ? 0px
+                    : edge == "e" || edge == "ne" || edge == "se" ? parent.width - 6px
+                    : 0px;
+                y: edge == "n" || edge == "ne" || edge == "nw" ? 0px
+                    : edge == "s" || edge == "se" || edge == "sw" ? parent.height - 6px
+                    : 0px;
+                width: edge == "n" || edge == "s" ? parent.width : 6px;
+                height: edge == "e" || edge == "w" ? parent.height : 6px;
+                mouse-cursor: edge == "n" ? n-resize
+                    : edge == "s" ? s-resize
+                    : edge == "e" ? e-resize
+                    : edge == "w" ? w-resize
+                    : edge == "ne" ? ne-resize
+                    : edge == "nw" ? nw-resize
+                    : edge == "se" ? se-resize
+                    : sw-resize;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) { root.window-resize(edge); }
+                }
+            }
+        }
+
+        // ---- nội dung ----
+        HorizontalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                width: 220px;
+                background: Theme.solid-secondary;
+
+                VerticalLayout {
+                    padding: Theme.s3;
+                    spacing: 2px;
+
+                    HorizontalLayout {
+                        spacing: Theme.s2;
+                        height: 44px;
+                        padding-left: Theme.s2;
+                        Text {
+                            text: "Cài đặt";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle { height: Theme.s2; }
+
+                    for page-item in root.pages: SettingsNavItem {
+                        label: page-item.label;
+                        icon: page-item.icon;
+                        selected: root.page == page-item.id;
+                        clicked => { root.page-changed(page-item.id); }
+                    }
+                }
+            }
+
+            Rectangle { width: 1px; background: Theme.stroke-divider; }
+
+            ScrollView {
+                VerticalLayout {
+                    padding: Theme.s5;
+                    spacing: Theme.s3;
+
+                    // --- Appearance ---
+                    if root.page == "appearance": VerticalLayout {
+                        spacing: Theme.s1;
+                        SectionTitle { heading: "Giao diện"; }
+                        SettingChoice {
+                            label: "Nền sáng";
+                            selected: !root.dark;
+                            clicked => { if (root.dark) { root.command("toggle-theme"); } }
+                        }
+                        SettingChoice {
+                            label: "Nền tối";
+                            selected: root.dark;
+                            clicked => { if (!root.dark) { root.command("toggle-theme"); } }
+                        }
+                        Rectangle { height: Theme.s3; }
+                        SectionTitle { heading: "Kiểu xem mặc định"; }
+                        SettingChoice {
+                            label: "Danh sách chi tiết";
+                            selected: root.view-mode == 0;
+                            clicked => { root.command("view-details"); }
+                        }
+                        SettingChoice {
+                            label: "Lưới";
+                            selected: root.view-mode == 1;
+                            clicked => { root.command("view-grid"); }
+                        }
+                    }
+
+                    // --- Layout ---
+                    if root.page == "layout": VerticalLayout {
+                        spacing: Theme.s1;
+                        SectionTitle { heading: "Bố cục"; }
+                        SettingToggle {
+                            label: "Thanh bên";
+                            description: "Hiện danh sách thư mục và ổ đĩa bên trái.";
+                            checked: root.show-sidebar;
+                            toggled => { root.command("toggle-sidebar"); }
+                        }
+                        SettingToggle {
+                            label: "Panel xem trước";
+                            description: "Hiện thông tin và ảnh của mục đang chọn.";
+                            checked: root.show-preview;
+                            toggled => { root.command("toggle-preview"); }
+                        }
+                        SettingToggle {
+                            label: "Hai khung";
+                            description: "Chia vùng duyệt thành hai khung độc lập.";
+                            checked: root.dual-pane;
+                            toggled => { root.command("toggle-dual-pane"); }
+                        }
+                    }
+
+                    // --- Folders ---
+                    if root.page == "folders": VerticalLayout {
+                        spacing: Theme.s1;
+                        SectionTitle { heading: "Thư mục và tệp"; }
+                        SettingToggle {
+                            label: "Hiện mục ẩn";
+                            description: "Bao gồm tệp có thuộc tính ẩn hoặc hệ thống.";
+                            checked: root.show-hidden;
+                            toggled => { root.command("toggle-hidden"); }
+                        }
+                        SettingToggle {
+                            label: "Hiện phần mở rộng";
+                            description: "Hiện .txt, .png… sau tên tệp.";
+                            checked: root.show-extensions;
+                            toggled => { root.command("toggle-extensions"); }
+                        }
+                        SettingToggle {
+                            label: "Thư mục trước tệp";
+                            description: "Gom thư mục lên đầu danh sách.";
+                            checked: root.folders-first;
+                            toggled => { root.command("toggle-folders-first"); }
+                        }
+                    }
+
+                    // --- Tags ---
+                    if root.page == "tags": VerticalLayout {
+                        spacing: Theme.s1;
+                        SectionTitle { heading: "Thẻ màu"; }
+                        Text {
+                            text: "Thẻ dùng để đánh dấu tệp và thư mục bằng màu. Đổi tên hay màu không làm mất thẻ đã gắn.";
+                            color: Theme.text-tertiary;
+                            font-size: Theme.font-caption;
+                            wrap: word-wrap;
+                            height: 36px;
+                        }
+                        for tag in root.tags: TagRow {
+                            tag-name: tag.name;
+                            tag-color: tag.color;
+                            renamed => { root.tag-rename(tag.uid); }
+                            recolored => { root.tag-recolor(tag.uid); }
+                            removed => { root.tag-remove(tag.uid); }
+                        }
+                        HorizontalLayout {
+                            padding-top: Theme.s3;
+                            FluentButton {
+                                label: "Thêm thẻ";
+                                icon: "add";
+                                clicked => { root.tag-add(); }
+                            }
+                        }
+                    }
+
+                    // --- Advanced ---
+                    if root.page == "advanced": VerticalLayout {
+                        spacing: Theme.s1;
+                        SectionTitle { heading: "Nâng cao"; }
+                        SettingInfo {
+                            label: "Tệp cấu hình";
+                            value: root.settings-path;
+                            copyable: true;
+                            activated => { root.open-location(root.settings-path); }
+                        }
+                        SettingInfo {
+                            label: "Tệp thẻ màu";
+                            value: root.tags-path;
+                            copyable: true;
+                            activated => { root.open-location(root.tags-path); }
+                        }
+                        SettingInfo {
+                            label: "Tệp log";
+                            value: root.log-path;
+                            copyable: true;
+                            activated => { root.open-location(root.log-path); }
+                        }
+                    }
+
+                    // --- About ---
+                    if root.page == "about": VerticalLayout {
+                        spacing: Theme.s1;
+                        SectionTitle { heading: "Giới thiệu"; }
+                        SettingInfo { label: "Phiên bản"; value: root.version; }
+                        SettingInfo { label: "Giấy phép"; value: "MIT"; }
+                        SettingInfo {
+                            label: "Mã nguồn";
+                            value: "github.com/iamhieuxz/files-rs-slint";
+                            copyable: true;
+                            activated => { root.open-location("https://github.com/iamhieuxz/files-rs-slint"); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

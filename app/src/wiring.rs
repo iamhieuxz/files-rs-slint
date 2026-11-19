@@ -753,54 +753,27 @@ pub fn wire_callbacks(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         });
     }
     // ---- Settings ----
+    // Cửa sổ Settings là cửa sổ riêng. Nó phát lệnh về đây để cửa sổ chính thực
+    // thi và lưu, nên chỉ có một đường ghi `settings.json`.
     {
         let (w, a) = (ui.as_weak(), app.clone());
-        ui.on_settings_page_changed(move |id| {
+        ui.on_open_settings(move || {
             let Some(ui) = w.upgrade() else { return };
-            ui.set_settings_page(id);
-            crate::settings_page::refresh(&ui, &a);
-        });
-    }
-    {
-        let w = ui.as_weak();
-        ui.on_settings_close(move || {
-            let Some(ui) = w.upgrade() else { return };
-            crate::settings_page::close(&ui);
-        });
-    }
-    {
-        let (w, a) = (ui.as_weak(), app.clone());
-        ui.on_settings_tag_rename(move |uid| {
-            let Some(ui) = w.upgrade() else { return };
-            crate::settings_page::rename_tag(&ui, &a, uid.as_str());
-        });
-    }
-    {
-        let (w, a) = (ui.as_weak(), app.clone());
-        ui.on_settings_tag_recolor(move |uid| {
-            let Some(ui) = w.upgrade() else { return };
-            crate::settings_page::recolor_tag(&ui, &a, uid.as_str());
-        });
-    }
-    {
-        let (w, a) = (ui.as_weak(), app.clone());
-        ui.on_settings_tag_remove(move |uid| {
-            let Some(ui) = w.upgrade() else { return };
-            crate::settings_page::remove_tag(&ui, &a, uid.as_str());
-        });
-    }
-    {
-        let (w, a) = (ui.as_weak(), app.clone());
-        ui.on_settings_tag_add(move || {
-            let Some(ui) = w.upgrade() else { return };
-            crate::settings_page::add_tag(&ui, &a);
-        });
-    }
-    {
-        let (w, a) = (ui.as_weak(), app.clone());
-        ui.on_settings_open_folder(move |path| {
-            let Some(ui) = w.upgrade() else { return };
-            crate::settings_page::open_location(&ui, &a, path.as_str());
+            let cmd_ui = ui.as_weak();
+            // Closure cần sở hữu bản `Rc` riêng: `open` cũng đang mượn `a`.
+            let cmd_app = a.clone();
+            let result =
+                crate::settings_page::open(&a, crate::settings_page::DEFAULT_PAGE, move |id| {
+                    if let Some(ui) = cmd_ui.upgrade() {
+                        crate::commands::run_command(&ui, &cmd_app, id);
+                    }
+                });
+            if let Err(e) = result {
+                logging::write(&format!("không mở được cửa sổ Settings: {e}"));
+                ui.set_error_text(SharedString::from(
+                    format!("Không mở được cửa sổ Settings: {e}").as_str(),
+                ));
+            }
         });
     }
     {

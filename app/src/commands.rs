@@ -210,6 +210,19 @@ pub fn toggle_theme(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 }
 
 pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
+    // Lệnh do cửa sổ Settings phát về: mang tham số sau dấu `:`.
+    if let Some(uid) = id.strip_prefix("settings-tag-rename:") {
+        crate::dialogs::ask_tag_rename(ui, uid);
+        return;
+    }
+    if let Some(uid) = id.strip_prefix("settings-tag-recolor:") {
+        crate::dialogs::ask_tag_recolor(ui, uid);
+        return;
+    }
+    if let Some(path) = id.strip_prefix("settings-open:") {
+        crate::settings_page::open_location(ui, app, path);
+        return;
+    }
     // Mục thẻ mang uid trong mã lệnh, nên phải bắt trước khi so khớp chuỗi.
     if let Some(uid) = id.strip_prefix("tag-set:") {
         set_tag_on_selection(ui, app, Some(uid));
@@ -331,8 +344,8 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "open-with-dialog" => open_with_dialog_for_selection(ui, app),
         "register-assoc" => ask_register_association(ui),
         "open-default-apps" => open_default_apps(ui),
-        // Mở trang Settings trong app, không phải trang Settings của Windows.
-        "open-settings" => crate::settings_page::open(ui, app, crate::settings_page::DEFAULT_PAGE),
+        // Mở cửa sổ Settings riêng; cửa sổ chính giữ nguyên kích thước.
+        "open-settings" => ui.invoke_open_settings(),
         // ---- hiển thị ----
         "toggle-extensions" => {
             let v = !app.borrow().show_extensions;
