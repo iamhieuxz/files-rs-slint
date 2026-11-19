@@ -150,27 +150,20 @@ cargo test -p files-rs-app ops_worker
 ## Tài liệu và trạng thái kế hoạch
 
 - Code và test là nguồn sự thật cuối cùng. Nếu tài liệu mâu thuẫn với code, dừng lại và cập nhật tài liệu trong cùng thay đổi.
-- `FEATURE_GAP_PLAN.md` là roadmap tính năng; `CODE_REVIEW_PLAN.md` là checklist cải tiến đang thực hiện; `REFACTOR_PLAN.md` chủ yếu là nhật ký lịch sử.
-- `PLAN.md` và `README.md` có số liệu cũ. Không dùng chúng làm nguồn xác nhận trạng thái hiện tại.
+- `ROADMAP.md` là nguồn sự thật duy nhất về việc còn thiếu, xếp theo giai đoạn A–L.
+- `docs/archive/` chứa các kế hoạch đã hoàn thành (`PLAN`, `REFACTOR_PLAN`, `CODE_REVIEW_PLAN`, `FEATURE_GAP_PLAN`). Chỉ tra cứu lịch sử, không cập nhật.
 - Không đánh dấu `[x]` nếu chưa chạy kiểm chứng tương ứng. Mục UI cần kiểm tra thao tác thật hoặc UIA; mục filesystem cần test và môi trường Windows.
 - Chỉ ghi số test, số cảnh báo hoặc kích thước build khi vừa đo lại.
 
-## Ưu tiên hiện tại sau review
+## Ưu tiên hiện tại
 
-Các mục dưới đây phản ánh review ngày 2026-11-19. Kiểm tra lại code trước khi sửa vì mục có thể đã được xử lý; xóa mục khỏi danh sách khi đã có regression test.
+Thứ tự dưới đây lấy từ `ROADMAP.md`. Kiểm tra lại code trước khi sửa vì mục có thể đã được xử lý.
 
-- [ ] Chặn copy/move thư mục vào chính hậu duệ của nó và chỉ fallback rename khi khác volume. *(đã xong)*
-- [ ] Sửa redo tạo đúng tên tệp, không thêm `.txt`, và khôi phục action khi undo/redo thất bại. *(đã xong)*
-- [ ] Làm replace an toàn bằng staging/rollback; validate tên create/rename; không bỏ qua lỗi xóa. *(đã xong)*
-- [ ] Sở hữu và dừng timer/worker khi đóng cửa sổ; sửa watcher bỏ sót sự kiện và stale pane. *(timer đã xong; watcher/stale pane còn)*
-- [ ] Đưa I/O khỏi UI thread, ảo hóa danh sách lớn và đo lại UI với 10.000 mục. *(preview và các `is_dir` đồng bộ đã xong; virtualization còn)*
-- [ ] Báo đúng kết quả xóa từng mục; ghi settings/tags nguyên tử và không ghi đè chéo giữa cửa sổ. *(đã xong)*
-- [ ] Hoàn thiện accessibility cho hàng tệp, trạng thái chọn và thao tác bàn phím.
-- [ ] Thêm `git diff --check` vào quy trình CI. *(fmt đã có trong CI)*
-- [ ] Làm sạch archive: không để zip dở, không đi theo junction, không ghi đè khi giải nén. *(đã xong)*
-- [ ] Bổ sung `// SAFETY:` cho các khối `unsafe` còn thiếu trong `native_drop.rs`.
-- [ ] Chỉ coi file JSON là hỏng khi nội dung không rỗng nhưng parse lỗi; không quarantine file 0 byte.
-- [ ] Cho phép rename chỉ khác hoa/thường và giới hạn độ dài tên ở 255 ký tự.
+- Giai đoạn **A** — dọn nợ kỹ thuật: `// SAFETY:` cho `native_drop.rs`, watcher không bỏ sót sự kiện, `git diff --check` trong CI, đồng bộ README.
+- Giai đoạn **B** — duyệt và khôi phục Thùng rác (`IShellFolder` + `IContextMenu`).
+- Giai đoạn **C** — trang Settings trong UI.
+- **D1** — ảo hoá danh sách, đo trước và sau với 10.000–100.000 mục.
+- Sau đó theo phản hồi người dùng: D2–D6, E, F, G, H, I, J, K, L.
 
 ## Định nghĩa hoàn thành
 
