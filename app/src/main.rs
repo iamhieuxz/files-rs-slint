@@ -31,6 +31,7 @@ mod persist;
 mod preview;
 mod selection;
 mod settings;
+mod settings_page;
 mod state;
 mod tabs;
 mod tags;

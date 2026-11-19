@@ -96,6 +96,8 @@ pub fn open(start: PathBuf) -> Result<(), slint::PlatformError> {
     tabs::sync_tabs(&ui, &app.borrow());
 
     wiring::wire_callbacks(&ui, &app);
+    // Trang Settings cần danh sách trang và đường dẫn cấu hình trước lần vẽ đầu.
+    crate::settings_page::install(&ui, &app);
     let mut timers = vec![
         events::install_progress_pump(&ui, &app),
         events::install_status_clear(&ui),

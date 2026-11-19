@@ -47,9 +47,8 @@ Các mục này nhỏ nhưng chặn chất lượng của mọi thứ phía sau.
 Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
 
 - [ ] **B1. Duyệt Thùng rác** — K
-  - Dùng `SHGetDesktopFolder` + `IShellFolder::EnumObjects` trên `CSIDL_BITBUCKET` (cách `SHGetKnownFolderPath` hiện trả `E_FAIL`).
-  - Hiện tên gốc, ngày xoá, kích thước.
-  - Bật `can_browse()` chỉ khi đã chạy được.
+  - **Đã thử và hoãn (2026-11-19):** `IShellFolder`/`IShellItem` qua `SHParseDisplayName`, `SHGetFolderLocation(CSIDL_BITBUCKET)`, `BindToObject`, `BindToHandler(BHID_EnumItems)` đều trả `S_OK` nhưng `Next` không trả mục nào, trong khi `Shell.Application` COM thấy 42 mục. Đã thử cả trên luồng STA riêng.
+  - Hướng còn lại: đọc trực tiếp `$RECYCLE.BIN` (parse `$I`/`$R`) hoặc dùng `Shell.Application` qua IDispatch. Cần quyết định trước khi làm.
 - [ ] **B2. Khôi phục từng mục** — K
   - Lấy verb `undelete` qua `IContextMenu` của từng mục, gọi `InvokeCommand`.
   - Chạy trên luồng STA, giải phóng COM đúng thứ tự.
@@ -63,17 +62,17 @@ Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
 
 ## Giai đoạn C: Settings trong UI
 
-- [ ] **C1. Khung trang Settings** — T
-  - View `settings` trong `app.slint`, mở bằng Ctrl+, và từ menu.
-  - Bốn trang đầu: Appearance, Layout, Folders, About.
-- [ ] **C2. Ghi qua `Settings::save`** — D
-  - Mỗi thay đổi lưu ngay; giữ `with_ui_from`/`with_pins_from` cho đa cửa sổ.
-- [ ] **C3. Trang Tags** — T
-  - Liệt kê, đổi tên, đổi màu, thêm/xoá thẻ; không đổi `uid` để giữ liên kết.
-- [ ] **C4. Trang Advanced** — T
-  - Đường dẫn log/settings/tags, nút mở thư mục, mở tệp cấu hình.
-- [ ] **C5. About** — D
-  - Phiên bản, giấy phép, liên kết repo.
+- [x] **C1. Khung trang Settings** — T
+  - `app/ui/settings_page.slint` (component `SettingToggle`, `SettingChoice`, `SettingInfo`, `TagRow`, `SettingsNavItem`) + `app/src/settings_page.rs`.
+  - View `settings` chiếm toàn bộ vùng nội dung; mở bằng Ctrl+, từ sidebar và Command Palette (`open-settings`).
+- [x] **C2. Ghi qua `Settings::save`** — D
+  - Mỗi công tắc gọi đúng lệnh có sẵn (`toggle-sidebar`, `toggle-preview`, `toggle-dual-pane`, `toggle-hidden`, `toggle-extensions`, `toggle-folders-first`, `toggle-theme`, `view-details`, `view-grid`) nên đường lưu không bị nhân đôi.
+- [x] **C3. Trang Tags** — T
+  - Đổi tên, đổi màu, xoá, thêm thẻ; giữ nguyên `uid` để không mất liên kết. Màu sai định dạng bị từ chối kèm ví dụ.
+- [x] **C4. Trang Advanced** — T
+  - Hiện đường dẫn settings/tags/log, bấm để điều hướng tới thư mục chứa.
+- [x] **C5. About** — D
+  - Phiên bản (từ `CARGO_PKG_VERSION`), giấy phép, liên kết repo.
 
 ---
 

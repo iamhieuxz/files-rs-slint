@@ -131,6 +131,7 @@ pub const IMPLEMENTED_COMMANDS: &[&str] = &[
     "next-tab",
     "open",
     "open-default-apps",
+    "open-settings",
     "open-new-tab",
     "open-selected",
     "open-terminal",
@@ -330,6 +331,8 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "open-with-dialog" => open_with_dialog_for_selection(ui, app),
         "register-assoc" => ask_register_association(ui),
         "open-default-apps" => open_default_apps(ui),
+        // Mở trang Settings trong app, không phải trang Settings của Windows.
+        "open-settings" => crate::settings_page::open(ui, app, crate::settings_page::DEFAULT_PAGE),
         // ---- hiển thị ----
         "toggle-extensions" => {
             let v = !app.borrow().show_extensions;
@@ -874,6 +877,12 @@ pub const PALETTE: &[PaletteCommand] = &[
         label: "Mở Settings ứng dụng mặc định",
         icon: "settings",
         shortcut: "",
+    },
+    PaletteCommand {
+        id: "open-settings",
+        label: "Cài đặt",
+        icon: "settings",
+        shortcut: "Ctrl+,",
     },
 ];
 

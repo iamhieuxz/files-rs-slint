@@ -1,0 +1,272 @@
+// Trang Settings: một cửa sổ view thay cho việc sửa settings.json bằng tay.
+//
+// Bố cục theo Files gốc: danh sách trang bên trái, nội dung bên phải. Component
+// này chỉ vẽ và phát callback; toàn bộ việc đọc/ghi nằm ở Rust
+// (`app/src/settings_page.rs`), nên không có trạng thái nào bị nhân đôi.
+
+import { Theme } from "theme.slint";
+import { FluentIcon } from "icons.slint";
+import { FluentButton, FluentTextBox } from "widgets.slint";
+
+// Một dòng công tắc: nhãn + mô tả + công tắc.
+export component SettingToggle inherits Rectangle {
+    in property <string> label;
+    in property <string> description: "";
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled();
+
+    height: 56px;
+    background: transparent;
+
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.toggled(); } }
+
+    HorizontalLayout {
+        padding-left: Theme.s4;
+        padding-right: Theme.s4;
+        spacing: Theme.s3;
+        alignment: space-between;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.label;
+                color: root.enabled ? Theme.text-primary : Theme.text-disabled;
+                font-size: Theme.font-body;
+                vertical-alignment: center;
+            }
+            if root.description != "": Text {
+                text: root.description;
+                color: Theme.text-tertiary;
+                font-size: Theme.font-caption;
+                overflow: elide;
+            }
+        }
+
+        // Công tắc tự vẽ: Fluent dùng hình con nhộng 40x20.
+        Rectangle {
+            width: 40px;
+            height: 20px;
+            border-radius: 10px;
+            background: !root.enabled ? Theme.stroke
+                : root.checked ? Theme.accent
+                : Theme.stroke-strong;
+            animate background { duration: 90ms; }
+
+            Rectangle {
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                y: 4px;
+                x: root.checked ? parent.width - 16px : 4px;
+                background: root.checked ? Theme.text-on-accent : Theme.text-secondary;
+                animate x { duration: 90ms; }
+            }
+
+            ta := TouchArea {
+                enabled: root.enabled;
+                clicked => { root.toggled(); }
+            }
+        }
+    }
+}
+
+// Một dòng chọn trong nhóm loại trừ lẫn nhau (kiểu xem, theme…).
+export component SettingChoice inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+
+    height: 40px;
+    border-radius: Theme.r-sm;
+    background: root.selected ? Theme.accent-subtle
+        : ta.has-hover ? Theme.subtle-hover
+        : transparent;
+
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checked: root.selected;
+    accessible-action-default => { root.clicked(); }
+
+    HorizontalLayout {
+        padding-left: Theme.s4;
+        padding-right: Theme.s4;
+        spacing: Theme.s2;
+        alignment: start;
+
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: root.selected ? Theme.accent : Theme.stroke-strong;
+            y: (parent.height - 16px) / 2;
+            if root.selected: Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                x: 4px;
+                y: 4px;
+                background: Theme.accent;
+            }
+        }
+        Text {
+            text: root.label;
+            color: Theme.text-primary;
+            font-size: Theme.font-body;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Một dòng chỉ đọc: nhãn bên trái, giá trị bên phải, có thể bấm để mở.
+export component SettingInfo inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> copyable: false;
+    callback activated();
+
+    height: 44px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: Theme.s4;
+        padding-right: Theme.s4;
+        spacing: Theme.s3;
+        alignment: space-between;
+
+        Text {
+            text: root.label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-body;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.value;
+            color: Theme.text-primary;
+            font-size: Theme.font-caption;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-alignment: right;
+        }
+    }
+
+    if root.copyable: TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+// Một dòng thẻ màu: chấm màu, tên, và các nút sửa/xoá.
+export component TagRow inherits Rectangle {
+    in property <string> tag-name;
+    in property <color> tag-color: #808080;
+    callback renamed();
+    callback recolored();
+    callback removed();
+
+    height: 44px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: Theme.s4;
+        padding-right: Theme.s4;
+        spacing: Theme.s3;
+        alignment: space-between;
+
+        HorizontalLayout {
+            spacing: Theme.s3;
+            alignment: start;
+            Rectangle {
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                background: root.tag-color;
+                y: (parent.height - 14px) / 2;
+            }
+            Text {
+                text: root.tag-name;
+                color: Theme.text-primary;
+                font-size: Theme.font-body;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Theme.s2;
+            FluentButton {
+                label: "Đổi tên";
+                show-label: true;
+                clicked => { root.renamed(); }
+            }
+            FluentButton {
+                label: "Đổi màu";
+                clicked => { root.recolored(); }
+            }
+            FluentButton {
+                label: "Xoá";
+                clicked => { root.removed(); }
+            }
+        }
+    }
+}
+
+// Tiêu đề nhóm trong trang.
+export component SectionTitle inherits Text {
+    in property <string> heading;
+    text: root.heading;
+    color: Theme.text-primary;
+    font-size: Theme.font-subtitle;
+    font-weight: Theme.weight-semibold;
+    height: 36px;
+    vertical-alignment: center;
+}
+
+// Một mục trong danh sách trang bên trái.
+export component SettingsNavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> selected: false;
+    callback clicked();
+
+    height: 36px;
+    border-radius: Theme.r-sm;
+    background: root.selected ? Theme.accent-subtle
+        : ta.has-hover ? Theme.subtle-hover
+        : transparent;
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    HorizontalLayout {
+        padding-left: Theme.s3;
+        padding-right: Theme.s3;
+        spacing: Theme.s3;
+        FluentIcon {
+            name: root.icon;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - 16px) / 2;
+            tint: root.selected ? Theme.accent : Theme.text-secondary;
+        }
+        Text {
+            text: root.label;
+            color: root.selected ? Theme.accent : Theme.text-primary;
+            font-size: Theme.font-body;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}

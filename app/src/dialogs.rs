@@ -152,6 +152,16 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
             }
         }
         "confirm-default" => register_association(ui),
+        // Hai hộp thoại của trang Settings: đối tượng cần sửa nằm ở
+        // `dialog-target` vì ô nhập chỉ trả về chuỗi.
+        "settings-tag-rename" => {
+            let target = ui.get_dialog_target().to_string();
+            crate::settings_page::apply_rename(ui, app, &target, value);
+        }
+        "settings-tag-recolor" => {
+            let target = ui.get_dialog_target().to_string();
+            crate::settings_page::apply_recolor(ui, app, &target, value);
+        }
         // Nút chính của hộp thoại trùng tên là "Giữ cả hai".
         "confirm-empty-bin" => match files_fs::empty_recycle_bin() {
             Ok(()) => ui.set_status_message(SharedString::from("Đã làm rỗng Thùng rác")),
