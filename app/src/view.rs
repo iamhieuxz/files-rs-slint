@@ -77,6 +77,10 @@ fn sort_id(tab: &Tab) -> &'static str {
 }
 
 fn build_rows(a: &App, tab: &Tab, grid_width: f32) -> (Vec<FileRow>, Vec<ModelRc<FileRow>>) {
+    // `selection.contains` là O(số mục đang chọn); gọi nó cho từng hàng biến
+    // việc dựng danh sách thành O(n²). Với 10.000 tệp và chọn tất cả, đó là
+    // 100 triệu phép so sánh mỗi lần vẽ lại.
+    let selected: std::collections::HashSet<usize> = tab.selection.iter().copied().collect();
     let rows: Vec<FileRow> = tab
         .visible
         .iter()
@@ -100,7 +104,7 @@ fn build_rows(a: &App, tab: &Tab, grid_width: f32) -> (Vec<FileRow>, Vec<ModelRc
                 path: SharedString::from(e.path.as_str()),
                 is_dir: e.is_dir(),
                 is_hidden: e.is_hidden,
-                selected: tab.selection.contains(entry_index),
+                selected: selected.contains(entry_index),
                 size: SharedString::from(format::format_size(e.size).as_str()),
                 modified: SharedString::from(format::format_time(e.modified_ms).as_str()),
                 kind: SharedString::from(format::kind_label(e).as_str()),

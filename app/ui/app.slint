@@ -1,7 +1,7 @@
 // Khung ứng dụng: title bar gộp tab, address bar, command bar, sidebar, danh sách,
 // preview pane, status bar. Bố cục theo Files (files.community).
 
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { FluentIcon } from "icons.slint";
 import {
@@ -1159,8 +1159,11 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
-                            if root.view-mode == 0: VerticalLayout {
-                                spacing: 0px;
+                            if root.view-mode == 0: ListView {
+                                // `ListView` của Slint chỉ dựng những hàng nằm trong
+                                // vùng nhìn thấy. Trước đây dùng `ScrollView` +
+                                // `for row[i]`, nên thư mục 10.000 mục tạo 10.000
+                                // phần tử UI mỗi lần vẽ lại.
                                 for row[i] in root.rows: Rectangle {
                                     height: Theme.row-height;
                                     border-radius: Theme.r-sm;

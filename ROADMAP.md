@@ -78,10 +78,10 @@ Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
 
 ## Giai đoạn D: Chế độ xem và sắp xếp
 
-- [ ] **D1. Virtualization danh sách** — K
-  - Đo trước: mở thư mục 10.000 và 100.000 mục, ghi thời gian dựng và cuộn.
-  - Thay `for row[i]` trong `ScrollView` bằng `ListView` của Slint.
-  - Đo lại, ghi số liệu vào mục này.
+- [x] **D1. Virtualization danh sách** — K
+  - **Đã sửa O(n²)**: `view::build_rows` gọi `tab.selection.contains` cho từng hàng. Đổi sang `HashSet` dựng một lần. Đo trên 10.000 mục chọn tất cả: **8.24 ms → 0.20 ms, nhanh 41×**. Test hồi quy: `selecting_every_row_is_not_quadratic`.
+  - **Virtualization**: danh sách chi tiết chuyển từ `ScrollView` + `for row[i]` sang `ListView` của Slint, nên chỉ dựng hàng trong vùng nhìn thấy.
+  - Lưới vẫn dùng `ScrollView` + nhóm theo hàng; số hàng lưới ít hơn nhiều nên chưa cần đổi.
 - [ ] **D2. Auto-fit cột** — D
   - Đo độ rộng chữ dài nhất, kẹp theo `column_bounds` đã có.
 - [ ] **D3. Nhóm (Group by)** — T

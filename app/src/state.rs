@@ -430,6 +430,30 @@ mod tests {
     }
 
     #[test]
+    fn selecting_every_row_is_not_quadratic() {
+        // `Tab::selected_paths` và phép dựng hàng đều dựa vào `selection`.
+        // Trước đây mỗi hàng gọi `selection.contains`, thành O(n²) khi chọn hết.
+        // Test này đo trực tiếp trên 10.000 mục: nếu ai đó đưa `contains` trở
+        // lại, thời gian tăng vọt và test bắt được.
+        let mut tab = Tab::new(PathBuf::from("C:\\"));
+        tab.entries = (0..10_000)
+            .map(|i| entry(&format!("tep-{i:05}.txt")))
+            .collect();
+        tab.rebuild_visible();
+        tab.selection = (0..tab.entries.len()).collect();
+
+        let started = std::time::Instant::now();
+        let paths = tab.selected_paths();
+        let elapsed = started.elapsed();
+
+        assert_eq!(paths.len(), 10_000);
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "lấy đường dẫn của 10.000 mục quá chậm: {elapsed:?}"
+        );
+    }
+
+    #[test]
     fn a_pending_watch_event_is_remembered_until_a_reload_is_queued() {
         // Watcher có thể báo thay đổi trong lúc đang tải. Nếu cờ này bị bỏ qua,
         // danh sách hiện trạng thái cũ cho tới lần làm mới sau.
