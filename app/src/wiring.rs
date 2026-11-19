@@ -110,6 +110,9 @@ fn show_row_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, i: i32, x: f32, y: f32) {
     ui.set_open_with_items(ModelRc::new(VecModel::from(open_with_items)));
     ui.set_open_with_open(false);
 
+    // Đang ở Thùng rác: menu chỉ hiện hành động có nghĩa ở đó.
+    let in_recycle = a.borrow().tab().recycle;
+
     let mut items = vec![
         menu("open", "Mở", "open", "Enter", i >= 0, false),
         menu(
@@ -145,6 +148,15 @@ fn show_row_menu(ui: &AppWindow, a: &Rc<RefCell<App>>, i: i32, x: f32, y: f32) {
             "link",
             "Ctrl+Shift+C",
             i >= 0,
+            false,
+        ),
+        // Khôi phục: chỉ có nghĩa khi đang ở Thùng rác, nên ẩn ngoài ngữ cảnh đó.
+        menu(
+            "restore-from-recycle-bin",
+            "Khôi phục về chỗ cũ",
+            "arrow_clockwise",
+            "",
+            i >= 0 && in_recycle,
             false,
         ),
         menu("", "", "", "", false, true),

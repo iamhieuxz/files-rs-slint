@@ -46,13 +46,18 @@ Các mục này nhỏ nhưng chặn chất lượng của mọi thứ phía sau.
 
 Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
 
-- [ ] **B1. Duyệt Thùng rác** — K
-  - **Đã thử và hoãn (2026-11-19):** `IShellFolder`/`IShellItem` qua `SHParseDisplayName`, `SHGetFolderLocation(CSIDL_BITBUCKET)`, `BindToObject`, `BindToHandler(BHID_EnumItems)` đều trả `S_OK` nhưng `Next` không trả mục nào, trong khi `Shell.Application` COM thấy 42 mục. Đã thử cả trên luồng STA riêng.
-  - Hướng còn lại: đọc trực tiếp `$RECYCLE.BIN` (parse `$I`/`$R`) hoặc dùng `Shell.Application` qua IDispatch. Cần quyết định trước khi làm.
-- [ ] **B2. Khôi phục từng mục** — K
-  - Lấy verb `undelete` qua `IContextMenu` của từng mục, gọi `InvokeCommand`.
-  - Chạy trên luồng STA, giải phóng COM đúng thứ tự.
-  - Bật `can_restore()` sau khi có test thật.
+- [x] **B1. Duyệt Thùng rác** — K
+  - **Đã thử Shell và thất bại (2026-11-19):** `IShellFolder`/`IShellItem` qua `SHParseDisplayName`, `SHGetFolderLocation(CSIDL_BITBUCKET)`, `BindToObject`, `BindToHandler(BHID_EnumItems)` đều trả `S_OK` nhưng `Next` không trả mục nào, trong khi `Shell.Application` thấy 45 mục. Thùng rác là namespace ảo, mục của nó chỉ đi qua `IShellFolderView`.
+  - **Cách làm đã chọn: đọc trực tiếp `$RECYCLE.BIN`.** Mỗi mục là cặp `$I<id>` (metadata) + `$R<id>` (nội dung). Định dạng `$I` version 2 đã kiểm chứng trên 26 tệp thật:
+    `0..8 version=2`, `8..16 size`, `16..24 FILETIME`, `24..28 chars` (**bao gồm NUL kết thúc**), `28.. path UTF-16LE`.
+  - `files-core/src/recycle_meta.rs` — parser thuần dữ liệu, 12 test. `files-fs/src/recycle.rs` — đọc `$I`/`$R`, ghép cặp theo stem, bỏ qua `$I` mồ côi và tệp hỏng.
+  - **Kiểm chứng:** đọc được **45 mục** thật (khớp khảo sát C: 27, D: 4, E: 17).
+  - UI: `Tab::recycle` + `load_recycle_pane`, lệnh `open-recycle-bin`. Cột ngày hiện **thời điểm xoá**.
+- [x] **B2. Khôi phục từng mục** — K
+  - `recycle::restore`: chuyển `$R` về đường dẫn gốc **trước**, chỉ xoá `$I` sau khi thành công; từ chối ghi đè đích; tạo thư mục cha nếu thiếu; fallback copy-rồi-xoá khi khác ổ.
+  - 6 test trên thư mục dựng sẵn. Lệnh `restore-from-recycle-bin` + mục menu chỉ hiện khi đang ở Thùng rác.
+  - **Chưa kiểm chứng end-to-end:** môi trường phát triển bị sandbox (`CodexSandboxUsers` chỉ có `ReadAndExecute`) chặn ghi `$Recycle.Bin`, nên `SHFileOperationW` trả `rc=0` mà xoá vĩnh viễn. Hai test end-to-end đánh dấu `#[ignore]`; chạy tay trên máy không sandbox:
+    `cargo test -p files-fs --test recycle_restore -- --ignored --nocapture`
 - [ ] **B3. Khôi phục tất cả** — T (phụ thuộc B2).
 - [ ] **B4. Nhóm theo thư mục gốc / ngày xoá** — T (phụ thuộc B1).
 

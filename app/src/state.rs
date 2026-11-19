@@ -96,6 +96,18 @@ pub struct Tab {
     pub group_unit: files_core::group::DateUnit,
     /// Entries dropped by the hidden filter, reported in the status bar.
     pub hidden_count: usize,
+    /// Tab này đang hiển thị Thùng rác thay vì một thư mục trên đĩa.
+    ///
+    /// Thùng rác không phải thư mục thật nên không đi qua `Job::Load`; nội dung
+    /// được dựng từ `files_fs::list_recycle_bin`. Cờ này để `reload` biết phải
+    /// đi đường nào, và để UI đổi nhãn cột + hiện nút Khôi phục.
+    pub recycle: bool,
+    /// Mục gốc trong Thùng rác, song song với `entries` khi `recycle` bật.
+    ///
+    /// Cần giữ vì `Entry` chỉ có đường dẫn trong thùng rác, không có đường dẫn
+    /// gốc hay thời điểm xoá — hai thứ người dùng cần thấy để quyết định khôi
+    /// phục.
+    pub recycle_items: Vec<files_fs::RecycleItem>,
 }
 
 impl Tab {
@@ -111,7 +123,19 @@ impl Tab {
             hidden_count: 0,
             group_by: files_core::group::GroupBy::None,
             group_unit: files_core::group::DateUnit::Month,
+            recycle: false,
+            recycle_items: Vec::new(),
         }
+    }
+
+    /// Tab hiển thị Thùng rác.
+    ///
+    /// Không có đường dẫn thật để mở nên dùng một nhãn cố định; `reload` nhận
+    /// ra cờ `recycle` và nạp danh sách thay vì đọc thư mục.
+    pub fn new_recycle() -> Self {
+        let mut tab = Self::new(PathBuf::from("Thùng rác"));
+        tab.recycle = true;
+        tab
     }
 
     pub fn current(&self) -> &Path {

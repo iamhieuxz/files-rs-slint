@@ -38,8 +38,8 @@ pub use ops::{
 };
 pub use previewdata::{preview_data, PreviewData, PreviewKind, FOLDER_COUNT_LIMIT, TEXT_LIMIT};
 pub use recycle::{
-    bin_path as recycle_bin_path, can_browse as can_browse_recycle_bin, can_restore,
-    empty as empty_recycle_bin, list as list_recycle_bin, RecycleItem,
+    can_browse as can_browse_recycle_bin, can_restore, empty as empty_recycle_bin,
+    list as list_recycle_bin, restore as restore_recycle_item, RecycleItem,
 };
 pub use search::{search, SearchHit, SearchOptions};
 pub use shellicon::{shell_icon, thumbnail, wants_shell_icon, RgbaIcon};

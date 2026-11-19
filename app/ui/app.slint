@@ -637,6 +637,19 @@ export component AppWindow inherits Window {
                             }
 
                             Rectangle { height: Theme.s3; }
+                            // Thùng rác: bản gốc (Files) đưa nó vào nhóm Quick
+                            // Access, ngay dưới các thư mục ghim và trên Ổ đĩa —
+                            // không phải ở đáy sidebar. Giữ đúng thứ tự đó để
+                            // người quen Files thấy quen mắt.
+                            SidebarItem {
+                                label: "Thùng rác";
+                                icon: "delete";
+                                glyph: Theme.text-secondary;
+                                active: root.address-text == "Thùng rác";
+                                clicked => { root.command("open-recycle-bin"); }
+                            }
+
+                            Rectangle { height: Theme.s3; }
                             Rectangle {
                                 height: 32px;
                                 HorizontalLayout {
@@ -689,6 +702,8 @@ export component AppWindow inherits Window {
 
                     Rectangle { height: 1px; background: Theme.stroke-divider; }
                     Rectangle { height: Theme.s1; }
+                    // Chỉ Cài đặt ở đáy: Thùng rác đã chuyển lên nhóm Quick
+                    // Access phía trên, giống bố cục của Files gốc.
                     SidebarItem {
                         label: "Cài đặt";
                         icon: "settings";

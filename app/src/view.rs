@@ -27,6 +27,17 @@ pub fn push_view(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let pane = app.borrow().active_pane;
     push_pane(ui, app, pane);
     push_chrome(ui, app);
+    // Thanh trạng thái đọc từ tab đang active, nên phải vẽ lại cùng lúc với
+    // danh sách. Thiếu bước này thì đổi tab/thư mục để lại số mục của tab cũ —
+    // đúng lỗi thấy khi mở Thùng rác: danh sách rỗng mà chân trang vẫn ghi
+    // "57 thư mục, 74 tệp" của thư mục trước.
+    push_status(ui, app);
+    // Panel xem trước cũng giữ mục đã chọn của tab trước. Danh sách trống thì
+    // không có gì để xem, nên xoá panel thay vì để nó hiện dữ liệu không còn
+    // thuộc về đâu.
+    if app.borrow().tab().selection.is_empty() {
+        crate::preview::clear(ui);
+    }
 }
 
 /// Rebuild both panes and the shared chrome. Use this for a global display

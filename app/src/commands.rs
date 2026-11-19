@@ -112,6 +112,8 @@ pub const IMPLEMENTED_COMMANDS: &[&str] = &[
     "compress",
     "copy",
     "copy-path",
+    "open-recycle-bin",
+    "restore-from-recycle-bin",
     "copy-path-quoted",
     "open-containing-folder",
     "cut",
@@ -376,6 +378,8 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         "nav-up" | "nav-down" => move_selection(ui, app, id == "nav-down"),
         // ---- tệp: xoá vĩnh viễn, sao chép đường dẫn, terminal ----
         "delete-permanent" => ask_delete_permanent(ui, app),
+        "open-recycle-bin" => open_recycle_bin(ui, app),
+        "restore-from-recycle-bin" => restore_selected_from_bin(ui, app),
         "copy-path" => copy_selected_path(ui, app),
         "copy-path-quoted" => copy_selected_path_quoted(ui, app),
         "open-containing-folder" => open_containing_folder(ui, app),
@@ -754,6 +758,18 @@ pub const PALETTE: &[PaletteCommand] = &[
         shortcut: "Shift+Del",
     },
     PaletteCommand {
+        id: "open-recycle-bin",
+        label: "Mở Thùng rác",
+        icon: "delete",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "restore-from-recycle-bin",
+        label: "Khôi phục mục đã chọn",
+        icon: "arrow_clockwise",
+        shortcut: "",
+    },
+    PaletteCommand {
         id: "copy-path",
         label: "Sao chép đường dẫn",
         icon: "link",
@@ -1041,6 +1057,88 @@ pub fn toggle_pin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     } else {
         "Đã bỏ ghim"
     }));
+}
+
+/// Mở Thùng rác trong một tab mới.
+///
+/// Thùng rác không có đường dẫn thật nên tab đánh dấu `recycle`; `reload` đọc
+/// danh sách `$I`/`$R` thay vì đọc thư mục.
+pub fn open_recycle_bin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    {
+        let mut s = app.borrow_mut();
+        s.tabs.push(crate::state::Tab::new_recycle());
+        s.active = s.tabs.len() - 1;
+        s.active_pane = crate::state::Pane::Left;
+    }
+    crate::logging::write(&format!(
+        "open_recycle_bin: tabs={} active={} recycle={}",
+        app.borrow().tabs.len(),
+        app.borrow().active,
+        app.borrow().tab().recycle
+    ));
+    crate::tabs::sync_tabs(ui, &app.borrow());
+    crate::navigation::reload(ui, app);
+    ui.set_status_message(SharedString::from("Thùng rác"));
+}
+
+/// Khôi phục các mục đang chọn trong Thùng rác về đúng chỗ cũ.
+///
+/// Báo rõ từng trường hợp thất bại: đích đã có tệp cùng tên, hoặc nội dung đã
+/// bị dọn khỏi thùng rác. Không im lặng bỏ qua, vì người dùng cần biết mục nào
+/// chưa về được.
+pub fn restore_selected_from_bin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let (items, current) = {
+        let s = app.borrow();
+        let tab = s.tab();
+        if !tab.recycle {
+            ui.set_error_text(SharedString::from(
+                "Chỉ khôi phục được khi đang mở Thùng rác",
+            ));
+            return;
+        }
+        let indices = tab.selected_paths();
+        let mut items = Vec::new();
+        for path in &indices {
+            // `Entry.path` của tab thùng rác là đường dẫn `$R`; tìm lại mục gốc
+            // theo đường dẫn đó để lấy `$I` và đích khôi phục.
+            if let Some(item) = tab.recycle_items.iter().find(|i| i.r_path == *path) {
+                items.push(item.clone());
+            }
+        }
+        (items, tab.current().to_path_buf())
+    };
+    let _ = current;
+
+    if items.is_empty() {
+        ui.set_status_message(SharedString::from("Chọn mục cần khôi phục"));
+        return;
+    }
+
+    let mut done = 0usize;
+    let mut first_error: Option<String> = None;
+    for item in &items {
+        match files_fs::restore_recycle_item(item) {
+            Ok(()) => done += 1,
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(format!("{}: {}", item.name, e.message));
+                }
+            }
+        }
+    }
+
+    // Nạp lại để danh sách phản ánh đúng những gì đã khôi phục.
+    crate::navigation::reload(ui, app);
+
+    if let Some(err) = first_error {
+        ui.set_error_text(SharedString::from(
+            format!("Khôi phục {done}/{} mục. Lỗi đầu tiên — {err}", items.len()).as_str(),
+        ));
+    } else {
+        ui.set_status_message(SharedString::from(
+            format!("Đã khôi phục {done} mục").as_str(),
+        ));
+    }
 }
 
 /// Xoay các ảnh đang chọn 90° sang phải.

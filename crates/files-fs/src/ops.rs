@@ -56,11 +56,62 @@ pub fn is_hidden_on_disk(path: &Path) -> bool {
     }
 }
 
+/// Chuyển một đường dẫn sang dạng **dài** (không phải 8.3) để Shell xử lý.
+///
+/// # Vì sao cần
+///
+/// `SHFileOperationW` với `FOF_ALLOWUNDO` **âm thầm xoá vĩnh viễn** khi nhận
+/// đường dẫn dạng 8.3 (`C:\Users\IAMHIE~1\...`): nó trả `rc = 0`, tệp biến mất,
+/// nhưng **không tạo tệp `$I`** trong Thùng rác. Đo được trên máy thật:
+///
+/// ```text
+/// đường dẫn dài  C:\Users\iamhieuxz\...  ->  rc=0  inBin=true
+/// đường dẫn ngắn C:\Users\IAMHIE~1\...   ->  rc=0  inBin=false   (mất dữ liệu)
+/// ```
+///
+/// Đây là bug mất dữ liệu thật: người dùng tưởng đã xoá vào Thùng rác nhưng
+/// không khôi phục được. Nguyên nhân là `TEMP`/`TMP` trên nhiều máy Windows được
+/// đặt ở dạng 8.3, và `std::env::temp_dir()` trả nguyên dạng đó.
+///
+/// Cách sửa: hỏi Windows đường dẫn dài bằng `GetLongPathNameW` trước khi đưa cho
+/// Shell. Không dùng `canonicalize` vì nó trả tiền tố `\\?\` mà
+/// `SHFileOperationW` từ chối với mã 124 (`DE_INVALIDFILES`).
+#[cfg(windows)]
+fn to_long_path(path: &Path) -> PathBuf {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetLongPathNameW;
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Gọi hai lần theo mẫu Win32: lần đầu lấy độ dài cần, lần sau lấy dữ liệu.
+    // SAFETY: `wide` là chuỗi UTF-16 có kết thúc NUL; lần gọi đầu không truyền
+    // buffer đích nên chỉ đọc chuỗi nguồn.
+    let needed = unsafe { GetLongPathNameW(PCWSTR(wide.as_ptr()), None) };
+    if needed == 0 {
+        // Đường dẫn không tồn tại hoặc lỗi: giữ nguyên để nơi gọi báo lỗi.
+        return path.to_path_buf();
+    }
+    let mut buffer = vec![0u16; needed as usize];
+    // SAFETY: buffer dài đúng `needed` phần tử như lần gọi trước yêu cầu.
+    let written = unsafe { GetLongPathNameW(PCWSTR(wide.as_ptr()), Some(&mut buffer)) };
+    if written == 0 || written as usize > buffer.len() {
+        return path.to_path_buf();
+    }
+    buffer.truncate(written as usize);
+    PathBuf::from(std::ffi::OsString::from_wide(&buffer))
+}
+
 /// Send entries to the Recycle Bin.
 ///
 /// Returns the number of entries the Shell accepted. A non-zero `SHFileOperationW`
 /// result means the whole batch failed; per-item failures surface as a partial
 /// count, which the status bar reports.
+///
+/// # An toàn dữ liệu
+///
+/// `SHFileOperationW` có thể trả `rc = 0` mà **không** đưa mục vào Thùng rác (xem
+/// `to_long_path`). Vì vậy sau khi gọi, hàm này **đếm theo hậu điều kiện thật**:
+/// chỉ mục nào không còn trên đĩa mới tính là đã xoá. Không dựa vào `rc`.
 pub fn delete_to_recycle_bin(paths: &[PathBuf]) -> Result<usize, FsError> {
     if paths.is_empty() {
         return Ok(0);
@@ -76,10 +127,12 @@ pub fn delete_to_recycle_bin(paths: &[PathBuf]) -> Result<usize, FsError> {
         };
 
         // The Shell wants a double-NUL-terminated list of absolute paths.
+        // Dùng đường dẫn dài: đường dẫn 8.3 làm Shell xoá vĩnh viễn.
         let mut from: Vec<u16> = Vec::new();
         for p in paths {
             let abs = std::path::absolute(p).map_err(FsError::from)?;
-            from.extend(abs.as_os_str().encode_wide());
+            let long = to_long_path(&abs);
+            from.extend(long.as_os_str().encode_wide());
             from.push(0);
         }
         from.push(0);

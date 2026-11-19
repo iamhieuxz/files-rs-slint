@@ -13,6 +13,7 @@ pub mod sort;
 
 pub mod autofit;
 pub mod group;
+pub mod recycle_meta;
 
 pub use entry::{Entry, EntryKind};
 pub use error::FsError;
