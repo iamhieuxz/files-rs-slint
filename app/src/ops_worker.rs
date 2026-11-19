@@ -84,6 +84,8 @@ pub enum Job {
     /// Xoay ảnh 90° và ghi đè.
     Rotate {
         paths: Vec<PathBuf>,
+        /// `true` là ngược chiều kim đồng hồ (xoay trái).
+        counter_clockwise: bool,
     },
     /// Tìm đệ quy dưới một thư mục.
     Search {
@@ -512,7 +514,10 @@ fn run(job: Job, progress: &Progress) -> JobDone {
             let status = files_fs::status_for(&dir);
             JobDone::GitStatus { dir, status, token }
         }
-        Job::Rotate { paths } => {
+        Job::Rotate {
+            paths,
+            counter_clockwise,
+        } => {
             progress.begin(paths.len());
             let mut done = 0usize;
             let mut first_err = None;
@@ -520,7 +525,12 @@ fn run(job: Job, progress: &Progress) -> JobDone {
                 if progress.cancelled() {
                     break;
                 }
-                match files_fs::rotate_image_clockwise(p) {
+                let result = if counter_clockwise {
+                    files_fs::rotate_image_counter_clockwise(p)
+                } else {
+                    files_fs::rotate_image_clockwise(p)
+                };
+                match result {
                     Ok(()) => done += 1,
                     Err(e) => {
                         if first_err.is_none() {

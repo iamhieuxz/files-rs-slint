@@ -205,12 +205,13 @@ pub fn confirm_dialog(ui: &AppWindow, app: &Rc<RefCell<App>>, value: &str) {
                 ui.set_error_text(SharedString::from(text.as_str()));
             }
         },
-        "confirm-rotate" => {
+        "confirm-rotate" | "confirm-rotate-left" => {
             let paths = app.borrow().tab().selected_paths();
             if !paths.is_empty() {
-                app.borrow()
-                    .worker
-                    .submit(crate::ops_worker::Job::Rotate { paths });
+                app.borrow().worker.submit(crate::ops_worker::Job::Rotate {
+                    paths,
+                    counter_clockwise: kind == "confirm-rotate-left",
+                });
                 operations::begin(ui, app, "Đang xoay ảnh…");
             }
         }

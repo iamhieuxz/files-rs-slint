@@ -759,6 +759,15 @@ pub fn shortcut_target(_path: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Hướng xoay ảnh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rotate {
+    /// 90° theo chiều kim đồng hồ.
+    Clockwise,
+    /// 90° ngược chiều kim đồng hồ.
+    CounterClockwise,
+}
+
 /// Xoay ảnh 90° theo chiều kim đồng hồ và ghi đè lên chính tệp đó.
 ///
 /// Chỉ hỗ trợ định dạng mà Windows đọc/ghi được qua WIC (JPEG, PNG, BMP, GIF,
@@ -767,6 +776,16 @@ pub fn shortcut_target(_path: &Path) -> Option<PathBuf> {
 /// Xoay là thao tác phá huỷ: ghi đè lên tệp gốc nên không có bản sao để lùi.
 /// Người dùng được hỏi trước ở tầng UI.
 pub fn rotate_image_clockwise(path: &Path) -> Result<(), FsError> {
+    rotate_image(path, Rotate::Clockwise)
+}
+
+/// Xoay ảnh 90° ngược chiều kim đồng hồ và ghi đè lên chính tệp đó.
+pub fn rotate_image_counter_clockwise(path: &Path) -> Result<(), FsError> {
+    rotate_image(path, Rotate::CounterClockwise)
+}
+
+/// Xoay ảnh theo hướng cho trước, ghi đè nguyên tử lên tệp gốc.
+pub fn rotate_image(path: &Path, direction: Rotate) -> Result<(), FsError> {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
@@ -784,7 +803,7 @@ pub fn rotate_image_clockwise(path: &Path) -> Result<(), FsError> {
     // Đọc toàn bộ ảnh vào bộ nhớ, xoay, rồi ghi đè. Làm vậy để không bao giờ
     // để lại tệp dở dang: ghi xong mới thay tệp cũ.
     let bytes = std::fs::read(path).map_err(FsError::from)?;
-    let rotated = rotate_bytes(&bytes, &ext)?;
+    let rotated = rotate_bytes(&bytes, &ext, direction)?;
 
     let tmp = path.with_extension(format!("{ext}.rot"));
     std::fs::write(&tmp, &rotated).map_err(FsError::from)?;
@@ -798,13 +817,21 @@ pub fn rotate_image_clockwise(path: &Path) -> Result<(), FsError> {
 
 /// Xoay 90° thuần trên byte ảnh, tách khỏi phần đọc/ghi để test được.
 #[cfg(windows)]
-fn rotate_bytes(bytes: &[u8], ext: &str) -> Result<Vec<u8>, FsError> {
+fn rotate_bytes(bytes: &[u8], ext: &str, direction: Rotate) -> Result<Vec<u8>, FsError> {
     use windows::Win32::Graphics::Imaging::WICBitmapEncoderNoCache;
     use windows::Win32::Graphics::Imaging::{
-        CLSID_WICImagingFactory, IWICImagingFactory, WICBitmapTransformRotate90,
+        CLSID_WICImagingFactory, IWICImagingFactory, WICBitmapTransformOptions,
+        WICBitmapTransformRotate270, WICBitmapTransformRotate90,
     };
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    };
+
+    // WICBitmapTransformRotate270 xoay 270° theo chiều kim đồng hồ, tức 90°
+    // ngược chiều — đúng thứ "xoay trái" cần, không phải lật ảnh.
+    let transform: WICBitmapTransformOptions = match direction {
+        Rotate::Clockwise => WICBitmapTransformRotate90,
+        Rotate::CounterClockwise => WICBitmapTransformRotate270,
     };
 
     // SAFETY: `None` hợp lệ cho tham số reserved của CoInitializeEx.
@@ -833,7 +860,7 @@ fn rotate_bytes(bytes: &[u8], ext: &str) -> Result<Vec<u8>, FsError> {
             .CreateBitmapFlipRotator()
             .map_err(|e| FsError::new("image_failed", format!("tạo bộ xoay: {e}")))?;
         processor
-            .Initialize(&frame, WICBitmapTransformRotate90)
+            .Initialize(&frame, transform)
             .map_err(|e| FsError::new("image_failed", format!("xoay: {e}")))?;
 
         // Stream đích tạo bằng `SHCreateMemStream`: nó đã có bộ đệm sẵn, khác

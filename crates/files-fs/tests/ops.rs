@@ -594,6 +594,50 @@ fn rotating_a_png_swaps_its_dimensions() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn rotating_left_is_the_inverse_of_rotating_right() {
+    // Xoay phải rồi xoay trái phải trả về đúng kích thước ban đầu. Nếu ai đó
+    // map nhầm hướng, phép so sánh này bắt được ngay.
+    let root = scratch("rotate-ccw");
+    let src = root.join("anh.png");
+    let script = format!(
+        "Add-Type -AssemblyName System.Drawing; \
+         $b = New-Object System.Drawing.Bitmap 8,3; \
+         $g = [System.Drawing.Graphics]::FromImage($b); \
+         $g.Clear([System.Drawing.Color]::Blue); \
+         $b.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png); \
+         $g.Dispose(); $b.Dispose()",
+        src.display()
+    );
+    let ok = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok || !src.exists() {
+        let _ = std::fs::remove_dir_all(&root);
+        common::skip("không tạo được tệp mẫu bằng PowerShell");
+        return;
+    }
+
+    let original = read_png_size(&src);
+    files_fs::rotate_image_clockwise(&src).expect("xoay phải được");
+    let after_right = read_png_size(&src);
+    assert_eq!(
+        after_right,
+        (original.1, original.0),
+        "xoay phải phải đổi chiều"
+    );
+
+    files_fs::rotate_image_counter_clockwise(&src).expect("xoay trái được");
+    let after_both = read_png_size(&src);
+    assert_eq!(
+        after_both, original,
+        "xoay phải rồi trái phải trả về kích thước ban đầu"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Đọc rộng×cao từ header PNG (IHDR) mà không cần thư viện ảnh.
 fn read_png_size(path: &std::path::Path) -> (u32, u32) {
     let b = std::fs::read(path).expect("đọc được");

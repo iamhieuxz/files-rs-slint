@@ -103,7 +103,8 @@ Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
 - [ ] **E3. Chia pane ngang/dọc** — T
   - Hiện chỉ có hai khung cạnh nhau; thêm hướng chia và lưu vào settings.
 - [ ] **E4. Đóng pane đang active** — D
-- [ ] **E5. Fullscreen (F11)** — D
+- [x] **E5. Fullscreen (F11)** — D
+  - Borderless qua Win32 `GWL_STYLE`, trạng thái giữ trong biến tĩnh theo `hwnd`. Đo thật: 1240×800 → 1920×1080 → 1240×800.
 - [ ] **E6. Compact overlay** — T
   - `winit` đặt always-on-top và thu nhỏ.
 - [ ] **E7. Info pane tách khỏi preview pane** — T
@@ -117,12 +118,15 @@ Thiếu lớn nhất so với bản gốc và người dùng gặp hằng ngày.
 - [ ] **F2. Dán dạng shortcut** — D (phụ thuộc F1).
 - [ ] **F3. Gom mục đã chọn vào thư mục mới** — D
 - [ ] **F4. Làm phẳng thư mục** — T
-- [ ] **F5. Sao chép đường dẫn có ngoặc kép** — D
-- [ ] **F6. Mở thư mục chứa mục đang chọn** — D
+- [x] **F5. Sao chép đường dẫn có ngoặc kép** — D
+  - `copy_selected_path_quoted`; palette "Sao chép đường dẫn (có ngoặc kép)".
+- [x] **F6. Mở thư mục chứa mục đang chọn** — D
+  - `open_containing_folder` mở tab mới ở thư mục cha của mục đang chọn.
 - [ ] **F7. Hộp thoại Properties của Windows** — T
   - `SHObjectProperties` hoặc `IContextMenu` verb `properties`.
 - [ ] **F8. Alt+Enter mở thuộc tính** — D
-- [ ] **F9. Xoay trái** — D (đã có xoay phải).
+- [x] **F9. Xoay trái** — D (đã có xoay phải).
+  - `Rotate` enum + `rotate_image(path, direction)`; `WICBitmapTransformRotate270` cho chiều ngược. Test: xoay phải rồi trái trả về kích thước ban đầu.
 - [ ] **F10. Giải nén vào thư mục con tự chọn** — T
 - [ ] **F11. Nén 7z** — K (cần thêm crate; cân nhắc trước).
 - [ ] **F12. Alternate data stream** — T (rủi ro, chỉ làm nếu có yêu cầu).

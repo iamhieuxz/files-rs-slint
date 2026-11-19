@@ -43,6 +43,18 @@ pub fn wire(ui: &crate::AppWindow, app_id: *const std::cell::RefCell<crate::stat
 
     {
         let w = ui.as_weak();
+        ui.on_window_toggle_fullscreen(move || {
+            let Some(ui) = w.upgrade() else { return };
+            ui.window().with_winit_window(|win| {
+                if let Some(hwnd) = hwnd_of(win) {
+                    toggle_fullscreen(hwnd);
+                }
+            });
+        });
+    }
+
+    {
+        let w = ui.as_weak();
         ui.on_window_close(move || {
             let Some(ui) = w.upgrade() else { return };
             // Đóng cửa sổ phải đi qua registry: nếu chỉ `hide()` thì `App` và
@@ -147,6 +159,59 @@ fn set_maximized(hwnd: HWND, maximize: bool) {
     let cmd = if maximize { SW_MAXIMIZE } else { SW_RESTORE };
     // SAFETY: xem khối chú thích trên. Giá trị BOOL là trạng thái trước đó.
     let _ = unsafe { ShowWindow(hwnd, cmd) };
+}
+
+/// Cửa sổ nào đang ở chế độ toàn màn hình.
+///
+/// Không đọc lại style để đoán: `WS_MAXIMIZE` vẫn còn sau khi đổi style, và
+/// `GWLP_USERDATA` là chỗ winit giữ con trỏ trạng thái của nó nên ghi vào đó sẽ
+/// làm hỏng winit. Một biến tĩnh theo `hwnd` là đủ vì mỗi cửa sổ có một handle.
+#[cfg(windows)]
+static FULLSCREEN_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Bật/tắt toàn màn hình kiểu borderless.
+///
+/// Dùng Win32 thay vì thêm `winit` làm dependency trực tiếp: `slint` đã bọc
+/// winit, nhưng chỉ `with_winit_window` được tái xuất nên không đụng tới
+/// `winit::window::Fullscreen` từ crate này.
+#[cfg(windows)]
+fn toggle_fullscreen(hwnd: HWND) {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_STYLE, WS_CAPTION, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_THICKFRAME,
+    };
+
+    let key = hwnd.0 as isize;
+    let was_fullscreen = FULLSCREEN_HWND.load(Ordering::Relaxed) == key;
+
+    // SAFETY: `hwnd` là cửa sổ đang sống trên luồng UI. Các lời gọi chỉ đọc
+    // hoặc đổi style/kích thước, không gây UB với handle hợp lệ.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        if was_fullscreen {
+            // Khôi phục viền và thanh tiêu đề, rồi trả về kích thước trước đó.
+            let restored = (style & !WS_OVERLAPPEDWINDOW.0)
+                | WS_OVERLAPPEDWINDOW.0
+                | WS_CAPTION.0
+                | WS_THICKFRAME.0
+                | WS_SYSMENU.0
+                | WS_MINIMIZEBOX.0
+                | WS_MAXIMIZEBOX.0;
+            SetWindowLongPtrW(hwnd, GWL_STYLE, restored as isize);
+            FULLSCREEN_HWND.store(0, Ordering::Relaxed);
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            // Bỏ viền để nội dung phủ kín màn hình.
+            let stripped = (style & !(WS_CAPTION.0 | WS_THICKFRAME.0))
+                | WS_SYSMENU.0
+                | WS_MINIMIZEBOX.0
+                | WS_MAXIMIZEBOX.0;
+            SetWindowLongPtrW(hwnd, GWL_STYLE, stripped as isize);
+            FULLSCREEN_HWND.store(key, Ordering::Relaxed);
+            let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+        }
+    }
 }
 
 /// Cửa sổ đang phóng to hay không. Dùng cho nút và cho quyết định toggle.

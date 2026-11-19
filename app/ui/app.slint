@@ -279,6 +279,8 @@ export component AppWindow inherits Window {
     // Điều khiển cửa sổ (title bar tự vẽ).
     callback window-minimize();
     callback window-toggle-maximize();
+    // F11: bật/tắt toàn màn hình.
+    callback window-toggle-fullscreen();
     callback window-close();
     callback window-drag(length, length);
     // Kéo cột / đổi thứ tự cột / kéo viền cửa sổ.
@@ -350,6 +352,8 @@ export component AppWindow inherits Window {
                 if (key == ",") { root.command("open-settings"); return accept; }
             }
             if (event.text == Key.F5) { root.refresh(); return accept; }
+            // F11 bật/tắt toàn màn hình, giống mọi ứng dụng Windows.
+            if (event.text == Key.F11) { root.window-toggle-fullscreen(); return accept; }
             if (event.text == Key.F2) { root.command("rename"); return accept; }
             if (event.text == Key.Delete) {
                 // Shift+Delete xoá vĩnh viễn, bỏ qua Thùng rác.

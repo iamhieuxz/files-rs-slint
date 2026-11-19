@@ -32,8 +32,9 @@ pub use openwith::{open_with_apps, open_with_dialog, OpenWithApp};
 pub use ops::{
     copy_into, copy_into_with, copy_text_to_clipboard, create_file, create_folder,
     delete_permanently, delete_to_recycle_bin, directory_size, free_path, is_hidden_on_disk,
-    move_into, move_into_with, open_terminal, rename, rotate_image_clockwise, shortcut_target,
-    suggested_copy_name, validate_name, ConflictPolicy,
+    move_into, move_into_with, open_terminal, rename, rotate_image_clockwise,
+    rotate_image_counter_clockwise, shortcut_target, suggested_copy_name, validate_name,
+    ConflictPolicy,
 };
 pub use previewdata::{preview_data, PreviewData, PreviewKind, FOLDER_COUNT_LIMIT, TEXT_LIMIT};
 pub use recycle::{

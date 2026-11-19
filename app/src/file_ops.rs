@@ -33,6 +33,55 @@ pub fn copy_selected_path(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
 }
 
+/// Sao chép đường dẫn kèm ngoặc kép.
+///
+/// Dán đường dẫn có dấu cách vào `cmd` hoặc vào tham số dòng lệnh mà không có
+/// ngoặc kép sẽ bị tách thành nhiều đối số. Đây là biến thể người dùng cần cho
+/// trường hợp đó.
+pub fn copy_selected_path_quoted(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    let paths = app.borrow().tab().selected_paths();
+    let text = if paths.is_empty() {
+        format!("\"{}\"", app.borrow().tab().current().to_string_lossy())
+    } else {
+        paths
+            .iter()
+            .map(|p| format!("\"{}\"", p.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join("\r\n")
+    };
+    match files_fs::copy_text_to_clipboard(&text) {
+        Ok(()) => ui.set_status_message(SharedString::from("Đã sao chép đường dẫn có ngoặc kép")),
+        Err(e) => ui.set_error_text(SharedString::from(e.message.as_str())),
+    }
+}
+
+/// Mở thư mục chứa mục đang chọn trong một tab mới.
+///
+/// Khác "Mở": mục được chọn vẫn ở nguyên chỗ, ta chỉ điều hướng tới thư mục
+/// cha của nó. Khi không chọn gì thì đi lên một cấp.
+pub fn open_containing_folder(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    use crate::state::Tab;
+    let target = {
+        let s = app.borrow();
+        let tab = s.tab();
+        tab.selected_entries()
+            .first()
+            .and_then(|e| Path::new(&e.path).parent().map(Path::to_path_buf))
+            .or_else(|| tab.current().parent().map(Path::to_path_buf))
+    };
+    let Some(dir) = target else {
+        ui.set_error_text(SharedString::from("Không có thư mục cha"));
+        return;
+    };
+    {
+        let mut s = app.borrow_mut();
+        s.tabs.push(Tab::new(dir));
+        s.active = s.tabs.len() - 1;
+    }
+    crate::tabs::sync_tabs(ui, &app.borrow());
+    crate::navigation::reload(ui, app);
+}
+
 pub fn open_terminal_here(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let dir = app.borrow().tab().current().to_path_buf();
     if let Err(e) = files_fs::open_terminal(&dir) {

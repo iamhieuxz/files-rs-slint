@@ -8,8 +8,9 @@ use crate::dialogs::{
     ask_delete, ask_delete_permanent, ask_new, ask_rename, show_new_menu, show_properties,
 };
 use crate::file_ops::{
-    ask_paste, compress_selection, copy_selected_path, extract_selection, hash_selection,
-    open_terminal_here, redo_last, set_clipboard, undo_last, view_folder_size,
+    ask_paste, compress_selection, copy_selected_path, copy_selected_path_quoted,
+    extract_selection, hash_selection, open_containing_folder, open_terminal_here, redo_last,
+    set_clipboard, undo_last, view_folder_size,
 };
 use crate::navigation::{open_row, reload, reload_all};
 use crate::selection::first_selected_visible;
@@ -111,6 +112,8 @@ pub const IMPLEMENTED_COMMANDS: &[&str] = &[
     "compress",
     "copy",
     "copy-path",
+    "copy-path-quoted",
+    "open-containing-folder",
     "cut",
     "delete",
     "delete-permanent",
@@ -146,6 +149,7 @@ pub const IMPLEMENTED_COMMANDS: &[&str] = &[
     "rename",
     "reopen-tab",
     "rotate-cw",
+    "rotate-ccw",
     "search-recursive",
     "select-all",
     "select-invert",
@@ -255,6 +259,7 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
     match id {
         "tag-clear" => set_tag_on_selection(ui, app, None),
         "rotate-cw" => rotate_selection(ui, app),
+        "rotate-ccw" => rotate_selection_left(ui, app),
         "new-window" => open_new_window(ui, app),
         "empty-recycle-bin" => ask_empty_recycle_bin(ui),
         "pin-folder" => toggle_pin(ui, app),
@@ -372,6 +377,8 @@ pub fn run_command(ui: &AppWindow, app: &Rc<RefCell<App>>, id: &str) {
         // ---- tệp: xoá vĩnh viễn, sao chép đường dẫn, terminal ----
         "delete-permanent" => ask_delete_permanent(ui, app),
         "copy-path" => copy_selected_path(ui, app),
+        "copy-path-quoted" => copy_selected_path_quoted(ui, app),
+        "open-containing-folder" => open_containing_folder(ui, app),
         "open-terminal" => open_terminal_here(ui, app),
         "open-with-dialog" => open_with_dialog_for_selection(ui, app),
         "register-assoc" => ask_register_association(ui),
@@ -681,6 +688,12 @@ pub const PALETTE: &[PaletteCommand] = &[
         shortcut: "",
     },
     PaletteCommand {
+        id: "rotate-ccw",
+        label: "Xoay ảnh 90° trái",
+        icon: "arrow_sync",
+        shortcut: "",
+    },
+    PaletteCommand {
         id: "search-recursive",
         label: "Tìm trong thư mục con",
         icon: "search",
@@ -745,6 +758,18 @@ pub const PALETTE: &[PaletteCommand] = &[
         label: "Sao chép đường dẫn",
         icon: "link",
         shortcut: "Ctrl+Shift+C",
+    },
+    PaletteCommand {
+        id: "copy-path-quoted",
+        label: "Sao chép đường dẫn (có ngoặc kép)",
+        icon: "link",
+        shortcut: "",
+    },
+    PaletteCommand {
+        id: "open-containing-folder",
+        label: "Mở thư mục chứa mục này",
+        icon: "folder",
+        shortcut: "",
     },
     PaletteCommand {
         id: "compress",
@@ -1022,6 +1047,15 @@ pub fn toggle_pin(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 ///
 /// Ghi đè lên tệp gốc nên không hoàn tác được — hộp thoại xác nhận nói rõ.
 pub fn rotate_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    rotate_selection_dir(ui, app, false);
+}
+
+/// Xoay các ảnh đang chọn 90° sang trái (ngược chiều kim đồng hồ).
+pub fn rotate_selection_left(ui: &AppWindow, app: &Rc<RefCell<App>>) {
+    rotate_selection_dir(ui, app, true);
+}
+
+fn rotate_selection_dir(ui: &AppWindow, app: &Rc<RefCell<App>>, left: bool) {
     let paths: Vec<std::path::PathBuf> = app
         .borrow()
         .tab()
@@ -1044,11 +1078,16 @@ pub fn rotate_selection(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         ));
         return;
     }
-    ui.set_dialog_kind(SharedString::from("confirm-rotate"));
+    ui.set_dialog_kind(SharedString::from(if left {
+        "confirm-rotate-left"
+    } else {
+        "confirm-rotate"
+    }));
     ui.set_dialog_title(SharedString::from("Xoay ảnh"));
+    let direction = if left { "trái" } else { "phải" };
     ui.set_dialog_text(SharedString::from(
         format!(
-            "Xoay {} ảnh 90° sang phải. Ảnh gốc bị ghi đè nên không hoàn tác được.",
+            "Xoay {} ảnh 90° sang {direction}. Ảnh gốc bị ghi đè nên không hoàn tác được.",
             paths.len()
         )
         .as_str(),
